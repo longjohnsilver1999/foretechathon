@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "MorrowAI — EMI Restructuring Advisor",
+  title: "RestructAI — 90-Day MSME Stress Risk",
   description:
-    "Cash-flow-aware EMI restructuring scenarios that help MSMEs act before repayment stress becomes default.",
+    "An explainable, calibrated 90-day financial-stress risk engine for Indian MSMEs.",
 };
 
 export default function RootLayout({

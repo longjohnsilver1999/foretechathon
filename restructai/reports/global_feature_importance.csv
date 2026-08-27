@@ -1,0 +1,84 @@
+feature,importance
+Emi To Revenue,0.8595291225272422
+Receivable Stress,0.49596050218435306
+Revenue Deterioration,0.33906788463034543
+Debt Burden,0.3354699873232939
+Cash Runway Months,0.2775075907077272
+Missed Emi Count,0.2642738783657317
+Cash Runway,0.26235486649421336
+Repayment Delinquency Score,0.2545323270745181
+Revenue 3M Avg,0.2251303960207567
+Revenue 6M Avg,0.21639204135144843
+Delayed Emi Count 6M,0.19011670695702837
+Dscr,0.18936117595971774
+Number Of Active Loans,0.18590107167358008
+Free Cash Flow,0.1849169677706741
+Business Type Partnership,0.16288174986261314
+Expense To Revenue,0.15975419496382998
+Operating Margin,0.15975300691958838
+Minimum Bank Balance,0.15413532303644537
+Business Type Private Limited,0.14408125340529093
+Delayed Emi Count 3M,0.1425640182322394
+Average Payment Delay Days,0.1363164242239819
+Business Type Proprietorship,0.12959108933773722
+Gst Monthly Turnover,0.1222701779646794
+Liquidity Stress,0.11829349767202167
+State Uttar Pradesh,0.10852455384015047
+Remaining Tenure Months,0.10733405734837935
+Gst Vs Bank Credit Difference,0.10699533123822486
+Receivable Days Change,0.10129692136514655
+Revenue Growth 3M,0.09403944112309498
+Business Age Years,0.093247788786644
+Fixed Expenses,0.07976385135468927
+Monthly Operating Expenses,0.07560517390104415
+Overdue Receivables Ratio,0.07546687882693164
+Gst Turnover Growth,0.07509376063829663
+Revenue Momentum,0.06606279070773936
+Revenue Growth 6M,0.06593463673217058
+Variable Expenses,0.06280670573172283
+Monthly Revenue,0.06013925999632557
+State Maharashtra,0.055192904196944795
+Outstanding Loan Amount,0.053731719350702145
+Revenue Volatility,0.051235687823755864
+Industry Electronics,0.048856031063979774
+Business Type Llp,0.04610931632213069
+Industry Food Processing,0.043862447777929706
+Industry Retail,0.042369980693711576
+Employee Count,0.040969255411960004
+State Delhi,0.03702674652761668
+Cash Flow Volatility,0.03562282273965642
+Industry Services,0.03501530892042021
+State Telangana,0.03410171567904874
+Industry Chemicals,0.031858700957782024
+Average Bank Balance,0.03145053690891535
+Missingindicator Gst Vs Bank Credit Difference,0.03055089933821786
+Industry Manufacturing,0.030329505313116543
+State Gujarat,0.0280959908666292
+Current Emi,0.02737786543363234
+Expense Growth,0.025402845878823334
+Industry Construction,0.02514001325197114
+Debt To Revenue,0.025077148058152168
+Missingindicator Minimum Bank Balance,0.023122359242183057
+State Karnataka,0.022270177834246122
+Accounts Receivable,0.021192696165767636
+State Tamil Nadu,0.02107261440842644
+Interest Rate,0.019807909412631716
+Operating Cash Flow,0.015016553028132446
+Maximum Payment Delay Days,0.011219834397751295
+Industry Textile,0.011153347145575946
+Missingindicator Average Bank Balance,0.010787891546234439
+Industry Auto Components,0.010054060282980396
+Receivable Days,0.008015507771257884
+Receivables To Revenue,0.008015479511970043
+Total Existing Debt,0.006896491858863552
+State Rajasthan,0.005354985152538356
+Missingindicator Gst Turnover Growth,0.005094197445356077
+Missingindicator Revenue 3M Avg,0.004697064860902952
+Industry Logistics,0.0024705727534717835
+Emi To Free Cash Flow,0.0024376363072095616
+Missingindicator Revenue Momentum,0.001536753980247058
+Missingindicator Revenue Growth 3M,0.001536753980247058
+Missingindicator Revenue Deterioration,0.001536753980247058
+Cashflow Volatility Index,0.0007338486073870936
+Missingindicator Receivable Stress,0.0006607178397720098
+Missingindicator Receivable Days Change,0.0006607178397720098

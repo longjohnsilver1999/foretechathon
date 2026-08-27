@@ -13,15 +13,15 @@ async function render() {
   );
 }
 
-test("server-renders the MorrowAI restructuring advisor", async () => {
+test("server-renders the RestructAI stress-risk advisor", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>MorrowAI — EMI Restructuring Advisor<\/title>/i);
-  assert.match(html, /Your business can breathe easier\./);
-  assert.match(html, /Recommended restructuring plan/);
-  assert.match(html, /See how the plan holds up/);
+  assert.match(html, /<title>RestructAI — 90-Day MSME Stress Risk<\/title>/i);
+  assert.match(html, /See repayment stress before it becomes default\./);
+  assert.match(html, /Run 90-day risk analysis/);
+  assert.match(html, /Selected on evidence, not assumption/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/);
 });

@@ -1,196 +1,178 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { type CSSProperties, useMemo, useState } from "react";
 import {
+  Activity,
+  AlertTriangle,
   ArrowRight,
   BarChart3,
-  Building2,
   Check,
   CheckCircle2,
   ChevronRight,
-  CircleHelp,
+  CircleGauge,
+  Database,
   Download,
-  FileText,
-  Gauge,
-  IndianRupee,
+  FlaskConical,
+  Info,
   LayoutDashboard,
   LockKeyhole,
   Menu,
-  PencilLine,
+  RefreshCw,
   ShieldCheck,
   Sparkles,
   TrendingDown,
-  WalletCards,
+  TrendingUp,
   X,
 } from "lucide-react";
 
-type BusinessData = {
-  revenue: number;
-  expenses: number;
-  outstanding: number;
-  currentEmi: number;
-  annualRate: number;
-  months: number;
+import {
+  type BorrowerInput,
+  MODEL_BENCHMARK,
+  MODEL_METRICS,
+  MODEL_NAME,
+  PORTFOLIO_PREVALENCE,
+  scoreBorrower,
+} from "./risk-model";
+
+type InputTab = "financial" | "debt" | "conduct" | "business";
+
+const stressedBorrower: BorrowerInput = {
+  industry: "Textile",
+  state: "Gujarat",
+  business_type: "Private Limited",
+  business_age_years: 7,
+  employee_count: 28,
+  monthly_revenue: 1_200_000,
+  monthly_operating_expenses: 1_020_000,
+  free_cash_flow: 128_000,
+  average_bank_balance: 720_000,
+  revenue_growth_3m: -0.19,
+  cash_flow_volatility: 0.42,
+  receivable_days: 72,
+  receivable_days_change: 19,
+  overdue_receivables_ratio: 0.29,
+  outstanding_loan_amount: 5_600_000,
+  interest_rate: 12.4,
+  current_emi: 178_000,
+  remaining_tenure_months: 34,
+  total_existing_debt: 7_100_000,
+  number_of_active_loans: 3,
+  delayed_emi_count_3m: 2,
+  delayed_emi_count_6m: 3,
+  missed_emi_count: 0,
+  average_payment_delay_days: 14,
+  gst_turnover_growth: -0.16,
+  gst_vs_bank_credit_difference: 0.11,
 };
 
-type Plan = {
-  id: string;
-  label: string;
-  title: string;
-  description: string;
-  emi: number;
-  tenure: number;
-  extraInterest: number;
-  fit: number;
-  note: string;
+const scenarioPresets: Record<string, Partial<BorrowerInput>> = {
+  Stable: {
+    monthly_revenue: 1_550_000,
+    monthly_operating_expenses: 1_030_000,
+    free_cash_flow: 390_000,
+    average_bank_balance: 3_200_000,
+    revenue_growth_3m: 0.08,
+    cash_flow_volatility: 0.17,
+    receivable_days: 36,
+    receivable_days_change: -2,
+    overdue_receivables_ratio: 0.08,
+    current_emi: 128_000,
+    total_existing_debt: 4_400_000,
+    number_of_active_loans: 1,
+    delayed_emi_count_3m: 0,
+    delayed_emi_count_6m: 0,
+    missed_emi_count: 0,
+    average_payment_delay_days: 2,
+    gst_turnover_growth: 0.07,
+    gst_vs_bank_credit_difference: 0.03,
+  },
+  Stressed: stressedBorrower,
+  Critical: {
+    monthly_revenue: 950_000,
+    monthly_operating_expenses: 910_000,
+    free_cash_flow: 62_000,
+    average_bank_balance: 360_000,
+    revenue_growth_3m: -0.31,
+    cash_flow_volatility: 0.59,
+    receivable_days: 92,
+    receivable_days_change: 31,
+    overdue_receivables_ratio: 0.43,
+    current_emi: 212_000,
+    total_existing_debt: 8_400_000,
+    number_of_active_loans: 4,
+    delayed_emi_count_3m: 3,
+    delayed_emi_count_6m: 6,
+    missed_emi_count: 1,
+    average_payment_delay_days: 29,
+    gst_turnover_growth: -0.28,
+    gst_vs_bank_credit_difference: 0.18,
+  },
 };
 
-const initialData: BusinessData = {
-  revenue: 725000,
-  expenses: 599800,
-  outstanding: 1935000,
-  currentEmi: 91000,
-  annualRate: 11.75,
-  months: 24,
-};
-
-const months = ["SEP", "OCT", "NOV", "DEC", "JAN", "FEB"];
-const seasonality = [0.97, 0.86, 0.82, 0.89, 0.96, 1.03];
-
-function calculateEmi(principal: number, annualRate: number, tenure: number) {
-  const monthlyRate = annualRate / 1200;
-  if (!monthlyRate) return principal / tenure;
-  const factor = (1 + monthlyRate) ** tenure;
-  return (principal * monthlyRate * factor) / (factor - 1);
-}
-
-function formatMoney(value: number, compact = false) {
-  if (compact && Math.abs(value) >= 100000) {
-    return `₹${(value / 100000).toFixed(1)}L`;
-  }
-  return `₹${Math.round(value).toLocaleString("en-IN")}`;
-}
-
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
+const currency = (value: number) => `₹${Math.round(value).toLocaleString("en-IN")}`;
+const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
 
 export default function Home() {
-  const [data, setData] = useState(initialData);
-  const [draft, setDraft] = useState(initialData);
-  const [selectedPlan, setSelectedPlan] = useState(0);
-  const [downturn, setDownturn] = useState(0);
-  const [dataModal, setDataModal] = useState(false);
-  const [reviewModal, setReviewModal] = useState(false);
+  const [draft, setDraft] = useState<BorrowerInput>(stressedBorrower);
+  const [borrower, setBorrower] = useState<BorrowerInput>(stressedBorrower);
+  const [tab, setTab] = useState<InputTab>("financial");
+  const [activePreset, setActivePreset] = useState("Stressed");
   const [mobileNav, setMobileNav] = useState(false);
   const [toast, setToast] = useState("");
+  const result = useMemo(() => scoreBorrower(borrower), [borrower]);
 
-  const plans = useMemo<Plan[]>(() => {
-    const currentInterest = Math.max(data.currentEmi * data.months - data.outstanding, 0);
-    const balancedTenure = data.months + 12;
-    const reliefTenure = data.months + 24;
-    const balancedEmi = calculateEmi(data.outstanding, data.annualRate, balancedTenure);
-    const reliefEmi = calculateEmi(data.outstanding, data.annualRate + 0.25, reliefTenure);
-    const starterEmi = balancedEmi * 0.72;
-    const stepUpEmi = (balancedEmi * balancedTenure - starterEmi * 6) / (balancedTenure - 6);
+  const updateNumber = (key: keyof BorrowerInput, value: string) => {
+    setDraft((current) => ({ ...current, [key]: Number(value) }));
+    setActivePreset("Custom");
+  };
 
-    return [
-      {
-        id: "balanced",
-        label: "Balanced relief",
-        title: "Reduce EMI, extend by 12 months",
-        description: "Keep more cash in the business during your slower season without stretching the loan too far.",
-        emi: balancedEmi,
-        tenure: balancedTenure,
-        extraInterest: Math.max(balancedEmi * balancedTenure - data.outstanding - currentInterest, 0),
-        fit: 94,
-        note: "Best balance of monthly relief and total borrowing cost",
-      },
-      {
-        id: "max-relief",
-        label: "Maximum relief",
-        title: "Lower EMI, extend by 24 months",
-        description: "Create the largest monthly buffer now, with a longer repayment runway and higher total interest.",
-        emi: reliefEmi,
-        tenure: reliefTenure,
-        extraInterest: Math.max(reliefEmi * reliefTenure - data.outstanding - currentInterest, 0),
-        fit: 87,
-        note: "Strongest cash-flow protection during volatile months",
-      },
-      {
-        id: "step-up",
-        label: "Seasonal step-up",
-        title: "Start low, step up after 6 months",
-        description: "Pay less through the slow season, then increase repayments when your collections usually recover.",
-        emi: starterEmi,
-        tenure: balancedTenure,
-        extraInterest: Math.max(stepUpEmi * (balancedTenure - 6) + starterEmi * 6 - data.outstanding - currentInterest, 0),
-        fit: 82,
-        note: `EMI steps up to ${formatMoney(stepUpEmi)} from month 7`,
-      },
+  const updateText = (key: keyof BorrowerInput, value: string) => {
+    setDraft((current) => ({ ...current, [key]: value }));
+    setActivePreset("Custom");
+  };
+
+  const choosePreset = (name: string) => {
+    const next = { ...stressedBorrower, ...scenarioPresets[name] };
+    setDraft(next);
+    setBorrower(next);
+    setActivePreset(name);
+    setToast(`${name} scenario loaded and rescored.`);
+    window.setTimeout(() => setToast(""), 2200);
+  };
+
+  const runAnalysis = () => {
+    setBorrower(draft);
+    setToast("90-day stress analysis updated.");
+    window.setTimeout(() => setToast(""), 2200);
+  };
+
+  const downloadAnalysis = () => {
+    const lines = [
+      "RESTRUCTAI — MSME 90-DAY RISK ANALYSIS",
+      "",
+      `Predicted stress probability: ${percent(result.probability)}`,
+      `Stress score: ${result.score} / 100`,
+      `Risk category: ${result.category}`,
+      `Operational threshold: ${percent(result.threshold)}`,
+      `Selected model: ${MODEL_NAME} with sigmoid calibration`,
+      "",
+      "Early-warning signals:",
+      ...result.warnings.map((warning) => `- ${warning}`),
+      "",
+      "Main model drivers:",
+      ...result.drivers.slice(0, 5).map((driver) => `- ${driver.feature}: ${driver.impact > 0 ? "+" : ""}${driver.impact.toFixed(3)} log-odds contribution`),
+      "",
+      "Decision support only. Synthetic-data methodology demonstration; not validated for automatic credit decisions.",
     ];
-  }, [data]);
-
-  const plan = plans[selectedPlan];
-  const cashBeforeDebt = data.revenue - data.expenses;
-  const currentSurplus = cashBeforeDebt - data.currentEmi;
-  const breathingRoom = data.currentEmi - plan.emi;
-  const dscr = cashBeforeDebt / data.currentEmi;
-  const healthScore = Math.round(clamp(18 + dscr * 30, 35, 91));
-  const proposedDscr = cashBeforeDebt / plan.emi;
-
-  const forecast = useMemo(
-    () => seasonality.map((factor) => {
-      const revenue = data.revenue * factor * (1 - downturn / 100);
-      return {
-        current: revenue - data.expenses - data.currentEmi,
-        proposed: revenue - data.expenses - plan.emi,
-      };
-    }),
-    [data, downturn, plan.emi]
-  );
-
-  const showToast = (message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast(""), 2600);
-  };
-
-  const saveData = () => {
-    const sanitized = Object.fromEntries(
-      Object.entries(draft).map(([key, value]) => [key, Math.max(Number(value) || 0, 0)])
-    ) as unknown as BusinessData;
-    setData(sanitized);
-    setSelectedPlan(0);
-    setDataModal(false);
-    showToast("Business data updated. Your plans have been recalculated.");
-  };
-
-  const downloadProposal = () => {
-    const text = [
-      "MORROWAI — EMI RESTRUCTURING PROPOSAL",
-      "Generated for Suresh Textiles Pvt Ltd",
-      "",
-      `Recommended plan: ${plan.title}`,
-      `Outstanding principal: ${formatMoney(data.outstanding)}`,
-      `Current EMI: ${formatMoney(data.currentEmi)}`,
-      `Proposed EMI: ${formatMoney(plan.emi)}`,
-      `Proposed tenure: ${plan.tenure} months`,
-      `Monthly relief: ${formatMoney(breathingRoom)}`,
-      `Estimated additional interest: ${formatMoney(plan.extraInterest)}`,
-      `Projected DSCR: ${proposedDscr.toFixed(2)}x`,
-      "",
-      "Rationale",
-      `The proposed structure improves monthly debt-service coverage from ${dscr.toFixed(2)}x to ${proposedDscr.toFixed(2)}x and creates additional working-capital headroom before the forecast seasonal dip.`,
-      "",
-      "This scenario is indicative and subject to lender approval and verification of financial documents.",
-    ].join("\n");
-    const blob = new Blob([text], { type: "text/plain" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = "MorrowAI-restructuring-proposal.txt";
-    link.click();
-    URL.revokeObjectURL(link.href);
-    showToast("Lender proposal downloaded.");
+    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "restructai-risk-analysis.txt";
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setToast("Risk analysis downloaded.");
+    window.setTimeout(() => setToast(""), 2200);
   };
 
   const scrollTo = (id: string) => {
@@ -198,212 +180,212 @@ export default function Home() {
     setMobileNav(false);
   };
 
+  const scoreDegrees = `${result.score * 3.6}deg`;
+  const categoryClass = result.category.toLowerCase();
+  const maxDriverImpact = Math.max(...result.drivers.map((driver) => Math.abs(driver.impact)), 0.1);
+
   return (
-    <main className="app-shell">
-      <aside className={`sidebar ${mobileNav ? "mobile-open" : ""}`}>
-        <button className="brand-mark" onClick={() => scrollTo("overview")} aria-label="MorrowAI home">M</button>
+    <main className="risk-app">
+      <aside className={`risk-sidebar ${mobileNav ? "mobile-open" : ""}`}>
+        <button className="brand-mark" onClick={() => scrollTo("analysis")} aria-label="RestructAI home">R</button>
         <nav aria-label="Primary navigation">
-          <button className="nav-item active" onClick={() => scrollTo("overview")} data-tooltip="Overview" aria-label="Overview"><LayoutDashboard size={19} /></button>
-          <button className="nav-item" onClick={() => scrollTo("forecast")} data-tooltip="Cash-flow scenarios" aria-label="Cash-flow scenarios"><BarChart3 size={19} /></button>
-          <button className="nav-item" onClick={() => scrollTo("plans")} data-tooltip="Restructuring plans" aria-label="Restructuring plans"><WalletCards size={19} /></button>
-          <button className="nav-item" onClick={() => scrollTo("readiness")} data-tooltip="Lender readiness" aria-label="Lender readiness"><FileText size={19} /></button>
+          <button className="nav-item active" onClick={() => scrollTo("analysis")} data-tooltip="Risk analysis" aria-label="Risk analysis"><LayoutDashboard size={19} /></button>
+          <button className="nav-item" onClick={() => scrollTo("drivers")} data-tooltip="Risk drivers" aria-label="Risk drivers"><Activity size={19} /></button>
+          <button className="nav-item" onClick={() => scrollTo("model-evidence")} data-tooltip="Model evidence" aria-label="Model evidence"><BarChart3 size={19} /></button>
+          <button className="nav-item" onClick={() => scrollTo("methodology")} data-tooltip="Methodology" aria-label="Methodology"><Database size={19} /></button>
         </nav>
-        <button className="avatar" aria-label="Account for Suresh Kumar">SK</button>
+        <button className="avatar" aria-label="Analyst account">SK</button>
       </aside>
 
-      <section className="workspace">
-        <header className="topbar">
-          <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle navigation"><Menu size={20} /></button>
-          <div className="wordmark">MORROW<span>AI</span></div>
+      <section className="risk-workspace">
+        <header className="risk-topbar">
+          <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle navigation">{mobileNav ? <X size={20} /> : <Menu size={20} />}</button>
+          <div className="risk-wordmark">RESTRUCT<span>AI</span></div>
           <div className="top-actions">
-            <span className="secure"><LockKeyhole size={13} /> Bank-grade secure</span>
-            <button><CircleHelp size={15} /> Need help?</button>
+            <span className="secure"><LockKeyhole size={13} /> Local model demo</span>
+            <span className="model-chip"><FlaskConical size={13} /> Synthetic data • v1.0</span>
           </div>
         </header>
 
-        <div className="content" id="overview">
-          <div className="page-heading">
+        <div className="risk-content" id="analysis">
+          <div className="risk-hero">
             <div>
-              <p className="eyebrow">GOOD MORNING, SURESH</p>
-              <h1>Your business can breathe easier.</h1>
-              <p className="subtitle">We found a safer repayment path based on your latest cash flow.</p>
+              <p className="eyebrow">90-DAY EARLY-WARNING ENGINE</p>
+              <h1>See repayment stress before it becomes default.</h1>
+              <p>Model an MSME&apos;s probability of serious financial stress using cash flow, debt burden, repayment conduct and GST activity.</p>
             </div>
-            <button className="secondary-button" onClick={() => { setDraft(data); setDataModal(true); }}><PencilLine size={14} /> Update business data</button>
+            <div className="decision-badge"><ShieldCheck size={18} /><span><b>Decision support</b><small>Not an automatic credit decision</small></span></div>
           </div>
 
-          <section className="health-card">
-            <div className="health-copy">
-              <span className="status-pill"><TrendingDown size={12} /> Action recommended</span>
-              <p className="label">REPAYMENT HEALTH</p>
-              <div className="score-line"><strong>{healthScore}</strong><span>/100</span></div>
-              <p>Your current EMI is putting pressure on working capital. Restructuring now could prevent a missed payment during the October dip.</p>
-              <div className="health-stats">
-                <span><small>Current DSCR</small><b>{dscr.toFixed(2)}x</b></span>
-                <span><small>Cash after EMI</small><b>{formatMoney(currentSurplus)}</b></span>
-              </div>
-            </div>
-            <div className="health-chart" aria-label="Six month cash after EMI forecast">
-              <div className="chart-top"><span>Monthly cash after EMI</span><strong>{formatMoney(currentSurplus)}</strong></div>
-              <div className="mini-chart">
-                {forecast.map((item, index) => {
-                  const value = item.current;
-                  const height = clamp(Math.abs(value) / 1100, 8, 72);
-                  return <div className="mini-bar-wrap" key={months[index]}><div className={`mini-bar ${value < 0 ? "negative" : ""}`} style={{ height: `${height}%` }}></div></div>;
-                })}
-                <div className="safety-rule"><span>SAFETY LINE</span></div>
-              </div>
-              <div className="month-row">{months.map((month) => <span key={month}>{month}</span>)}</div>
-              <p className="chart-insight"><Sparkles size={13} /> AI flags October as your highest-risk month</p>
-            </div>
-          </section>
+          <div className="scenario-strip" aria-label="Borrower scenario presets">
+            <span>Try a scenario</span>
+            {Object.keys(scenarioPresets).map((name) => (
+              <button key={name} className={activePreset === name ? "selected" : ""} onClick={() => choosePreset(name)}>
+                {name === "Stable" ? <TrendingUp size={13} /> : name === "Critical" ? <AlertTriangle size={13} /> : <TrendingDown size={13} />}
+                {name}
+              </button>
+            ))}
+            {activePreset === "Custom" && <span className="custom-pill">Custom inputs</span>}
+          </div>
 
-          <section id="plans" className="section-block">
-            <div className="section-title">
-              <div><p className="eyebrow">YOUR BEST MATCH</p><h2>Recommended restructuring plan</h2></div>
-              <span className="confidence"><CheckCircle2 size={14} /> {plan.fit}% fit for your business</span>
-            </div>
+          <section className="analysis-grid">
+            <form className="borrower-card" onSubmit={(event) => { event.preventDefault(); runAnalysis(); }}>
+              <div className="card-heading">
+                <div><p className="eyebrow">BORROWER INPUT</p><h2>Financial snapshot</h2></div>
+                <span><CheckCircle2 size={13} /> 26 signals</span>
+              </div>
+              <div className="input-tabs" role="tablist" aria-label="Input groups">
+                <button type="button" className={tab === "financial" ? "active" : ""} onClick={() => setTab("financial")} role="tab">Cash flow</button>
+                <button type="button" className={tab === "debt" ? "active" : ""} onClick={() => setTab("debt")} role="tab">Debt</button>
+                <button type="button" className={tab === "conduct" ? "active" : ""} onClick={() => setTab("conduct")} role="tab">Conduct</button>
+                <button type="button" className={tab === "business" ? "active" : ""} onClick={() => setTab("business")} role="tab">Business</button>
+              </div>
 
-            <section className="plan-card">
-              <div className="plan-main">
-                <span className="plan-tag">{plan.label}</span>
-                <h3>{plan.title}</h3>
-                <p>{plan.description}</p>
-                <div className="metrics">
-                  <div><span>NEW MONTHLY EMI</span><strong>{formatMoney(plan.emi)}</strong><small>{formatMoney(breathingRoom)} less</small></div>
-                  <div><span>NEW TENURE</span><strong>{plan.tenure} months</strong><small>+{plan.tenure - data.months} months</small></div>
-                  <div><span>EXTRA INTEREST</span><strong>{formatMoney(plan.extraInterest)}</strong><small>over full tenure</small></div>
+              <div className="risk-form-grid">
+                {tab === "financial" && <>
+                  <NumberField label="Monthly revenue" value={draft.monthly_revenue} prefix="₹" onChange={(value) => updateNumber("monthly_revenue", value)} />
+                  <NumberField label="Operating expenses" value={draft.monthly_operating_expenses} prefix="₹" onChange={(value) => updateNumber("monthly_operating_expenses", value)} />
+                  <NumberField label="Free cash flow" value={draft.free_cash_flow} prefix="₹" onChange={(value) => updateNumber("free_cash_flow", value)} />
+                  <NumberField label="Average bank balance" value={draft.average_bank_balance} prefix="₹" onChange={(value) => updateNumber("average_bank_balance", value)} />
+                  <NumberField label="3-month revenue growth" value={draft.revenue_growth_3m * 100} suffix="%" step="0.5" onChange={(value) => updateNumber("revenue_growth_3m", String(Number(value) / 100))} />
+                  <NumberField label="Cash-flow volatility" value={draft.cash_flow_volatility * 100} suffix="%" step="1" onChange={(value) => updateNumber("cash_flow_volatility", String(Number(value) / 100))} />
+                </>}
+                {tab === "debt" && <>
+                  <NumberField label="Outstanding loan" value={draft.outstanding_loan_amount} prefix="₹" onChange={(value) => updateNumber("outstanding_loan_amount", value)} />
+                  <NumberField label="Current monthly EMI" value={draft.current_emi} prefix="₹" onChange={(value) => updateNumber("current_emi", value)} />
+                  <NumberField label="Total existing debt" value={draft.total_existing_debt} prefix="₹" onChange={(value) => updateNumber("total_existing_debt", value)} />
+                  <NumberField label="Interest rate" value={draft.interest_rate} suffix="%" step="0.1" onChange={(value) => updateNumber("interest_rate", value)} />
+                  <NumberField label="Remaining tenure" value={draft.remaining_tenure_months} suffix="months" onChange={(value) => updateNumber("remaining_tenure_months", value)} />
+                  <NumberField label="Active loans" value={draft.number_of_active_loans} onChange={(value) => updateNumber("number_of_active_loans", value)} />
+                </>}
+                {tab === "conduct" && <>
+                  <NumberField label="Receivable days" value={draft.receivable_days} suffix="days" onChange={(value) => updateNumber("receivable_days", value)} />
+                  <NumberField label="Change in receivable days" value={draft.receivable_days_change} suffix="days" onChange={(value) => updateNumber("receivable_days_change", value)} />
+                  <NumberField label="Overdue receivables" value={draft.overdue_receivables_ratio * 100} suffix="%" onChange={(value) => updateNumber("overdue_receivables_ratio", String(Number(value) / 100))} />
+                  <NumberField label="Delayed EMIs (3m)" value={draft.delayed_emi_count_3m} onChange={(value) => updateNumber("delayed_emi_count_3m", value)} />
+                  <NumberField label="Missed EMIs" value={draft.missed_emi_count} onChange={(value) => updateNumber("missed_emi_count", value)} />
+                  <NumberField label="Average payment delay" value={draft.average_payment_delay_days} suffix="days" onChange={(value) => updateNumber("average_payment_delay_days", value)} />
+                </>}
+                {tab === "business" && <>
+                  <SelectField label="Industry" value={draft.industry} options={["Manufacturing", "Textile", "Retail", "Food Processing", "Logistics", "Auto Components", "Services", "Construction", "Electronics", "Chemicals"]} onChange={(value) => updateText("industry", value)} />
+                  <SelectField label="State" value={draft.state} options={["Maharashtra", "Gujarat", "Tamil Nadu", "Karnataka", "Delhi", "Rajasthan", "Telangana", "Uttar Pradesh"]} onChange={(value) => updateText("state", value)} />
+                  <SelectField label="Business type" value={draft.business_type} options={["Proprietorship", "Partnership", "Private Limited", "LLP"]} onChange={(value) => updateText("business_type", value)} />
+                  <NumberField label="Business age" value={draft.business_age_years} suffix="years" onChange={(value) => updateNumber("business_age_years", value)} />
+                  <NumberField label="Employees" value={draft.employee_count} onChange={(value) => updateNumber("employee_count", value)} />
+                  <NumberField label="GST turnover growth" value={draft.gst_turnover_growth * 100} suffix="%" onChange={(value) => updateNumber("gst_turnover_growth", String(Number(value) / 100))} />
+                </>}
+              </div>
+
+              <div className="form-note"><Info size={13} /><span>Derived ratios—including DSCR, EMI burden and liquidity stress—are calculated automatically.</span></div>
+              <button className="run-button" type="submit"><Sparkles size={16} /> Run 90-day risk analysis <ArrowRight size={16} /></button>
+            </form>
+
+            <section className={`risk-result-card ${categoryClass}`} aria-live="polite">
+              <div className="result-topline"><span>MODEL RESULT</span><span className={`risk-pill ${categoryClass}`}>{result.category} risk</span></div>
+              <div className="score-layout">
+                <div className="score-ring" style={{ "--score-angle": scoreDegrees } as CSSProperties}>
+                  <div><strong>{Math.round(result.score)}</strong><span>/100</span></div>
+                </div>
+                <div className="probability-copy">
+                  <span>Predicted 90-day stress probability</span>
+                  <strong>{percent(result.probability)}</strong>
+                  <p>{result.classification ? "Above" : "Below"} the operational alert threshold of {percent(result.threshold)}.</p>
                 </div>
               </div>
-              <div className="plan-action">
-                <Gauge size={25} />
-                <p>Estimated monthly breathing room</p>
-                <strong>+ {formatMoney(breathingRoom)}</strong>
-                <button onClick={() => setReviewModal(true)}>Review this plan <ArrowRight size={16} /></button>
-                <small>No commitment • Takes 2 minutes</small>
+
+              <div className="risk-ratio-grid">
+                <div><span>DSCR</span><strong className={result.dscr < 1 ? "negative" : "positive"}>{result.dscr.toFixed(2)}x</strong><small>{result.dscr < 1 ? "Unsustainable" : "Covered"}</small></div>
+                <div><span>EMI / free cash flow</span><strong className={result.emiBurden > 0.8 ? "negative" : "positive"}>{result.emiBurden.toFixed(2)}x</strong><small>{result.emiBurden > 0.8 ? "High burden" : "Manageable"}</small></div>
+                <div><span>Cash runway</span><strong className={result.cashRunway < 2 ? "negative" : "positive"}>{result.cashRunway.toFixed(1)} mo</strong><small>{result.cashRunway < 2 ? "Thin buffer" : "Adequate"}</small></div>
               </div>
+
+              <div className="warning-panel">
+                <div className="warning-heading"><AlertTriangle size={15} /><span>Early-warning signals</span><b>{result.warnings.length}</b></div>
+                {result.warnings.length ? result.warnings.slice(0, 5).map((warning) => <p key={warning}><span>!</span>{warning}</p>) : <p className="all-clear"><Check size={13} /> No rule-assisted warnings detected.</p>}
+              </div>
+              <button className="download-button" onClick={downloadAnalysis}><Download size={15} /> Download risk analysis</button>
+              <small className="result-disclaimer">Calibrated probability • Synthetic-data methodology demo</small>
             </section>
+          </section>
 
-            <div className="alternative-row" aria-label="Alternative restructuring plans">
-              {plans.map((item, index) => (
-                <button key={item.id} className={`alternative-card ${index === selectedPlan ? "selected" : ""}`} onClick={() => setSelectedPlan(index)}>
-                  <span>{index === 0 ? "RECOMMENDED" : "ALTERNATIVE 0" + index}</span>
-                  <div><strong>{item.label}</strong><small>{formatMoney(item.emi)}/mo</small></div>
-                  <p>{item.note}</p>
-                  <ChevronRight size={17} />
-                </button>
-              ))}
+          <section className="drivers-section section-anchor" id="drivers">
+            <div className="section-heading">
+              <div><p className="eyebrow">LOCAL EXPLAINABILITY</p><h2>What moved this borrower&apos;s score</h2><p>Signed standardized log-odds contributions from the selected model—not invented percentage impacts.</p></div>
+              <span className="explain-badge"><Sparkles size={13} /> Exact model contributions</span>
+            </div>
+            <div className="drivers-grid">
+              <div className="driver-list">
+                {result.drivers.map((driver, index) => (
+                  <div className="driver-row" key={`${driver.feature}-${index}`}>
+                    <span className={`driver-icon ${driver.direction}`}>{driver.direction === "risk" ? <TrendingUp size={13} /> : <TrendingDown size={13} />}</span>
+                    <div><span><b>{driver.feature}</b><small>{driver.direction === "risk" ? "Increases risk" : "Reduces risk"}</small></span><div className="driver-track"><i className={driver.direction} style={{ width: `${Math.max(8, Math.abs(driver.impact) / maxDriverImpact * 100)}%` }}></i></div></div>
+                    <strong className={driver.direction}>{driver.impact > 0 ? "+" : ""}{driver.impact.toFixed(2)}</strong>
+                  </div>
+                ))}
+              </div>
+              <aside className="explanation-card">
+                <div className="icon-tile"><CircleGauge size={20} /></div>
+                <p className="eyebrow">MODEL INTERPRETATION</p>
+                <h3>{result.category === "Low" ? "Current signals indicate resilience." : "Liquidity and repayment pressure need attention."}</h3>
+                <p>{result.category === "Low" ? "Cash coverage and conduct signals keep the estimated probability below the early-warning threshold." : `The ${result.category.toLowerCase()} score is driven by the combined pattern across cash coverage, revenue momentum, receivables and repayment conduct.`}</p>
+                <div><ShieldCheck size={15} /><span>Rules explain operational alerts; they do not replace the ML estimate.</span></div>
+              </aside>
             </div>
           </section>
 
-          <section className="section-block scenario-section" id="forecast">
-            <div className="section-title scenario-heading">
-              <div><p className="eyebrow">STRESS TEST</p><h2>See how the plan holds up</h2><p>Test a revenue dip and compare your monthly buffer before committing.</p></div>
-              <div className="stress-control">
-                <label htmlFor="downturn">Revenue downturn <strong>{downturn}%</strong></label>
-                <input id="downturn" type="range" min="0" max="25" step="5" value={downturn} onChange={(event) => setDownturn(Number(event.target.value))} />
-                <div><span>Normal</span><span>Severe</span></div>
-              </div>
+          <section className="model-evidence section-anchor" id="model-evidence">
+            <div className="section-heading">
+              <div><p className="eyebrow">ACTUAL TEST RESULTS</p><h2>Selected on evidence, not assumption</h2><p>All metrics below were produced by the validated 12,000-borrower synthetic experiment.</p></div>
+              <span className="winner-chip"><CheckCircle2 size={14} /> {MODEL_NAME} selected</span>
             </div>
-            <div className="forecast-card">
-              <div className="forecast-legend"><span><i className="current-dot"></i> Current EMI</span><span><i className="proposed-dot"></i> With {plan.label.toLowerCase()}</span><b>₹0 safety line</b></div>
-              <div className="forecast-grid">
-                {forecast.map((item, index) => {
-                  const currentHeight = clamp(Math.abs(item.current) / 1400, 5, 80);
-                  const proposedHeight = clamp(Math.abs(item.proposed) / 1400, 5, 80);
-                  return (
-                    <div className="forecast-month" key={months[index]}>
-                      <div className="bar-space">
-                        <div className={`forecast-bar current-bar ${item.current < 0 ? "below" : ""}`} style={{ height: `${currentHeight}%` }}><span>{formatMoney(item.current, true)}</span></div>
-                        <div className={`forecast-bar proposed-bar ${item.proposed < 0 ? "below" : ""}`} style={{ height: `${proposedHeight}%` }}><span>{formatMoney(item.proposed, true)}</span></div>
-                      </div>
-                      <small>{months[index]}</small>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className={`stress-result ${forecast.some(item => item.proposed < 0) ? "warning" : "safe"}`}>
-                <ShieldCheck size={21} />
-                <div><strong>{forecast.some(item => item.proposed < 0) ? "This scenario needs more relief" : "Your selected plan stays above water"}</strong><span>{forecast.some(item => item.proposed < 0) ? "Try the maximum relief option or reduce the downturn assumption." : `Even with a ${downturn}% downturn, the model protects more working capital in every forecast month.`}</span></div>
+            <div className="metric-cards">
+              <MetricCard label="ROC–AUC" value={MODEL_METRICS.ROC_AUC} note="Discrimination" />
+              <MetricCard label="PR–AUC" value={MODEL_METRICS.PR_AUC} note="Imbalanced performance" />
+              <MetricCard label="Stress recall" value={MODEL_METRICS.Recall} note="At 0.36 threshold" />
+              <MetricCard label="Brier score" value={MODEL_METRICS.Brier_Score} note="Lower is better" inverse />
+            </div>
+
+            <div className="benchmark-card">
+              <div className="benchmark-head"><span>Formal benchmark</span><span>Uncalibrated 0.50 classification threshold for consistent comparison</span></div>
+              <div className="benchmark-table" role="table" aria-label="Model benchmark metrics">
+                <div className="benchmark-row header" role="row"><span>Model</span><span>ROC–AUC</span><span>PR–AUC</span><span>Recall</span><span>F1</span><span>Brier</span></div>
+                {MODEL_BENCHMARK.map((model) => <div className={`benchmark-row ${model.Model === MODEL_NAME ? "winner" : ""}`} role="row" key={model.Model}><span>{model.Model}{model.Model === MODEL_NAME && <b>Selected</b>}</span><span>{model.ROC_AUC.toFixed(3)}</span><span>{model.PR_AUC.toFixed(3)}</span><span>{model.Recall.toFixed(3)}</span><span>{model.F1.toFixed(3)}</span><span>{model.Brier_Score.toFixed(3)}</span></div>)}
               </div>
             </div>
           </section>
 
-          <section className="insight-grid section-block" id="readiness">
-            <div className="ai-insight-card">
-              <div className="icon-tile"><Sparkles size={21} /></div>
-              <p className="eyebrow">WHY THIS PLAN</p>
-              <h2>Built around your business rhythm, not just your loan.</h2>
-              <p>MorrowAI weighed cash-flow stability, seasonal collections, debt coverage and total borrowing cost across 48 scenarios.</p>
-              <ul>
-                <li><Check size={15} /> Protects the October–December low season</li>
-                <li><Check size={15} /> Raises projected DSCR to {proposedDscr.toFixed(2)}x</li>
-                <li><Check size={15} /> Keeps added interest below the maximum-relief option</li>
-              </ul>
+          <section className="methodology-section section-anchor" id="methodology">
+            <div className="method-copy">
+              <p className="eyebrow">METHODOLOGY</p>
+              <h2>Built for an auditable competition story.</h2>
+              <p>One reusable pipeline carries the borrower from raw inputs through financial features, preprocessing, calibrated probability, threshold classification and human-readable alerts.</p>
+              <div className="method-facts"><span><Database size={15} /><b>12,000</b><small>synthetic MSMEs</small></span><span><Activity size={15} /><b>{percent(PORTFOLIO_PREVALENCE)}</b><small>stress prevalence</small></span><span><RefreshCw size={15} /><b>5-fold</b><small>stratified CV</small></span></div>
             </div>
-            <div className="readiness-card">
-              <div className="readiness-top"><div><p className="eyebrow">LENDER READINESS</p><h3>Your proposal is nearly ready</h3></div><div className="progress-ring">75%</div></div>
-              <div className="check-list">
-                <div><span className="check done"><Check size={13} /></span><p><strong>Cash-flow analysis</strong><small>12 months reviewed</small></p></div>
-                <div><span className="check done"><Check size={13} /></span><p><strong>Loan repayment history</strong><small>No missed EMIs detected</small></p></div>
-                <div><span className="check done"><Check size={13} /></span><p><strong>Recommended structure</strong><small>{plan.label} selected</small></p></div>
-                <button onClick={() => setReviewModal(true)}><span className="check"><FileText size={13} /></span><p><strong>Business documents</strong><small>Add GST returns and bank statement</small></p><ChevronRight size={16} /></button>
-              </div>
-              <button className="outline-action" onClick={() => setReviewModal(true)}>Open lender packet <ArrowRight size={15} /></button>
+            <div className="pipeline-flow">
+              {["MSME inputs", "Financial features", "Three-model benchmark", "Sigmoid calibration", "Risk score + warnings"].map((step, index) => <div key={step}><span>{index + 1}</span><p>{step}</p>{index < 4 && <ChevronRight size={15} />}</div>)}
             </div>
           </section>
 
           <footer>
-            <div className="footer-brand"><div className="brand-mark small">M</div><span>MORROWAI</span></div>
-            <p>Indicative scenarios only. Final terms are subject to lender approval and document verification.</p>
-            <span>Encrypted • Consent-led • RBI-aware</span>
+            <div className="footer-brand"><div className="brand-mark small">R</div><span>RESTRUCTAI</span></div>
+            <p>Results use synthetic data to demonstrate methodology and are not validated real-world credit-risk performance.</p>
+            <span>Explainable • Calibrated • Human-reviewed</span>
           </footer>
         </div>
       </section>
-
-      {dataModal && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDataModal(false); }}>
-          <section className="modal data-modal" role="dialog" aria-modal="true" aria-labelledby="data-title">
-            <button className="modal-close" onClick={() => setDataModal(false)} aria-label="Close"><X size={19} /></button>
-            <div className="modal-icon"><Building2 size={20} /></div>
-            <p className="eyebrow">BUSINESS SNAPSHOT</p>
-            <h2 id="data-title">Update your numbers</h2>
-            <p className="modal-intro">We use these figures only to model repayment scenarios. Your recommendations update instantly.</p>
-            <div className="form-grid">
-              <label><span>Average monthly revenue</span><div><IndianRupee size={14} /><input type="number" value={draft.revenue} onChange={e => setDraft({ ...draft, revenue: Number(e.target.value) })} /></div></label>
-              <label><span>Monthly operating expenses</span><div><IndianRupee size={14} /><input type="number" value={draft.expenses} onChange={e => setDraft({ ...draft, expenses: Number(e.target.value) })} /></div></label>
-              <label><span>Outstanding loan principal</span><div><IndianRupee size={14} /><input type="number" value={draft.outstanding} onChange={e => setDraft({ ...draft, outstanding: Number(e.target.value) })} /></div></label>
-              <label><span>Current monthly EMI</span><div><IndianRupee size={14} /><input type="number" value={draft.currentEmi} onChange={e => setDraft({ ...draft, currentEmi: Number(e.target.value) })} /></div></label>
-              <label><span>Annual interest rate</span><div><input type="number" step="0.05" value={draft.annualRate} onChange={e => setDraft({ ...draft, annualRate: Number(e.target.value) })} /><b>%</b></div></label>
-              <label><span>Remaining tenure</span><div><input type="number" value={draft.months} onChange={e => setDraft({ ...draft, months: Number(e.target.value) })} /><b>months</b></div></label>
-            </div>
-            <div className="modal-actions"><button className="ghost-button" onClick={() => setDataModal(false)}>Cancel</button><button className="primary-button" onClick={saveData}>Recalculate my plans <ArrowRight size={15} /></button></div>
-          </section>
-        </div>
-      )}
-
-      {reviewModal && (
-        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setReviewModal(false); }}>
-          <section className="modal review-modal" role="dialog" aria-modal="true" aria-labelledby="review-title">
-            <button className="modal-close" onClick={() => setReviewModal(false)} aria-label="Close"><X size={19} /></button>
-            <div className="review-header"><span className="plan-tag">{plan.label}</span><h2 id="review-title">Your lender-ready plan</h2><p>A clear, evidence-backed request you can take to your lender.</p></div>
-            <div className="review-summary">
-              <div><span>Current EMI</span><strong>{formatMoney(data.currentEmi)}</strong></div><ArrowRight size={20} />
-              <div className="highlight"><span>Proposed EMI</span><strong>{formatMoney(plan.emi)}</strong></div>
-            </div>
-            <div className="review-details">
-              <div><span>Monthly cash released</span><strong>{formatMoney(breathingRoom)}</strong></div>
-              <div><span>New tenure</span><strong>{plan.tenure} months</strong></div>
-              <div><span>Projected DSCR</span><strong>{proposedDscr.toFixed(2)}x</strong></div>
-              <div><span>Estimated extra interest</span><strong>{formatMoney(plan.extraInterest)}</strong></div>
-            </div>
-            <div className="ai-note"><Sparkles size={18} /><p><strong>AI rationale</strong><span>This structure creates enough headroom for the seasonal low while avoiding the higher lifetime cost of a 24-month extension.</span></p></div>
-            <div className="document-note"><FileText size={18} /><p><strong>Complete your lender packet</strong><span>Attach your latest 6-month bank statement and GST returns before submission.</span></p></div>
-            <div className="modal-actions"><button className="ghost-button" onClick={() => setReviewModal(false)}>Back</button><button className="primary-button" onClick={downloadProposal}><Download size={15} /> Download proposal</button></div>
-          </section>
-        </div>
-      )}
-
-      {toast && <div className="toast" role="status"><CheckCircle2 size={17} /> {toast}</div>}
+      {toast && <div className="toast" role="status"><CheckCircle2 size={16} />{toast}</div>}
     </main>
   );
+}
+
+function NumberField({ label, value, onChange, prefix, suffix, step = "1" }: { label: string; value: number; onChange: (value: string) => void; prefix?: string; suffix?: string; step?: string }) {
+  return <label className="risk-field"><span>{label}</span><div>{prefix && <i>{prefix}</i>}<input aria-label={label} type="number" step={step} value={Number.isFinite(value) ? value : ""} onChange={(event) => onChange(event.target.value)} />{suffix && <b>{suffix}</b>}</div></label>;
+}
+
+function SelectField({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
+  return <label className="risk-field"><span>{label}</span><div><select aria-label={label} value={value} onChange={(event) => onChange(event.target.value)}>{options.map((option) => <option key={option}>{option}</option>)}</select></div></label>;
+}
+
+function MetricCard({ label, value, note, inverse = false }: { label: string; value: number; note: string; inverse?: boolean }) {
+  return <div className="metric-card"><div><span>{label}</span><Info size={12} /></div><strong>{value.toFixed(3)}</strong><p>{note}</p><i className={inverse ? "inverse" : ""} style={{ width: `${Math.min((inverse ? 1 - value : value) * 100, 100)}%` }}></i></div>;
 }

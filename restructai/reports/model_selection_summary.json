@@ -1,0 +1,50 @@
+{
+  "selected_model": "Logistic Regression",
+  "selection_reason": "Logistic Regression achieved the strongest validation utility when PR-AUC, distressed-class recall, F1, ROC-AUC and probability quality were weighted for the early-warning use case. The sigmoid calibration choice was retained using held-out validation Brier score.",
+  "operational_threshold": 0.36,
+  "calibration_method": "sigmoid",
+  "dataset_rows": 12000,
+  "dataset_prevalence": 0.11733333333333333,
+  "test_metrics": {
+    "ROC_AUC": 0.9392090089004079,
+    "PR_AUC": 0.7670096777975566,
+    "Precision": 0.6742671009771987,
+    "Recall": 0.7340425531914894,
+    "F1": 0.7028862478777589,
+    "Brier_Score": 0.05080111030941382
+  },
+  "top_global_features": [
+    {
+      "feature": "Emi To Revenue",
+      "importance": 0.8595291225272422
+    },
+    {
+      "feature": "Receivable Stress",
+      "importance": 0.49596050218435306
+    },
+    {
+      "feature": "Revenue Deterioration",
+      "importance": 0.33906788463034543
+    },
+    {
+      "feature": "Debt Burden",
+      "importance": 0.3354699873232939
+    },
+    {
+      "feature": "Cash Runway Months",
+      "importance": 0.2775075907077272
+    },
+    {
+      "feature": "Missed Emi Count",
+      "importance": 0.2642738783657317
+    },
+    {
+      "feature": "Cash Runway",
+      "importance": 0.26235486649421336
+    },
+    {
+      "feature": "Repayment Delinquency Score",
+      "importance": 0.2545323270745181
+    }
+  ]
+}
