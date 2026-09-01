@@ -20,8 +20,13 @@ test("server-renders the RestructAI stress-risk advisor", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>RestructAI — 90-Day MSME Stress Risk<\/title>/i);
-  assert.match(html, /See repayment stress before it becomes default\./);
+  assert.match(html, /Protect cash today\. Preserve credit tomorrow\./);
   assert.match(html, /Run 90-day risk analysis/);
+  assert.match(html, /Savings Coach/);
+  assert.match(html, /Verified: the models are not returning the same figures\./);
+  assert.match(html, /0\.9392/);
+  assert.match(html, /0\.9386/);
+  assert.match(html, /0\.9354/);
   assert.match(html, /Selected on evidence, not assumption/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/);
 });

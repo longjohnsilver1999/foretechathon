@@ -1,27 +1,32 @@
 "use client";
 
-import { type CSSProperties, useMemo, useState } from "react";
+import { type CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
   ArrowRight,
   BarChart3,
+  Bot,
   Check,
   CheckCircle2,
   ChevronRight,
   CircleGauge,
+  Coins,
   Database,
   Download,
   FlaskConical,
   Info,
   LayoutDashboard,
-  LockKeyhole,
   Menu,
+  MessageCircle,
+  PiggyBank,
   RefreshCw,
   ShieldCheck,
+  Send,
   Sparkles,
   TrendingDown,
   TrendingUp,
+  WalletCards,
   X,
 } from "lucide-react";
 
@@ -36,6 +41,17 @@ import {
 } from "./risk-model";
 
 type InputTab = "financial" | "debt" | "conduct" | "business";
+type ChatMessage = { id: number; role: "assistant" | "user"; text: string };
+
+const QUICK_PROMPTS = [
+  "Build my action plan",
+  "How much EMI relief?",
+  "Improve cash runway",
+  "Why this risk score?",
+];
+
+const LOGISTIC_BENCHMARK = MODEL_BENCHMARK.find((model) => model.Model === "Logistic Regression");
+const CATBOOST_BENCHMARK = MODEL_BENCHMARK.find((model) => model.Model === "CatBoost");
 
 const stressedBorrower: BorrowerInput = {
   industry: "Textile",
@@ -112,6 +128,7 @@ const scenarioPresets: Record<string, Partial<BorrowerInput>> = {
 };
 
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
+const money = (value: number) => `₹${Math.round(value).toLocaleString("en-IN")}`;
 
 export default function Home() {
   const [draft, setDraft] = useState<BorrowerInput>(stressedBorrower);
@@ -121,8 +138,25 @@ export default function Home() {
   const [activeSection, setActiveSection] = useState("analysis");
   const [mobileNav, setMobileNav] = useState(false);
   const [toast, setToast] = useState("");
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatInput, setChatInput] = useState("");
+  const nextMessageId = useRef(2);
+  const chatLogRef = useRef<HTMLDivElement>(null);
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
+    { id: 1, role: "assistant", text: "Hi, I’m your Savings Coach. I use the current borrower score and cash-flow plan to suggest practical next steps. Ask me for an action plan, EMI relief, or ways to improve runway." },
+  ]);
   const result = useMemo(() => scoreBorrower(borrower), [borrower]);
   const validationIssues = useMemo(() => validateBorrower(draft), [draft]);
+  const savingsPlan = useMemo(() => {
+    const affordableEmi = Math.max(borrower.free_cash_flow, 0) * 0.7;
+    const emiDiscussionTarget = result.category === "Low" ? borrower.current_emi : Math.min(borrower.current_emi, affordableEmi);
+    const monthlyRelief = Math.max(borrower.current_emi - emiDiscussionTarget, 0);
+    const reserveTarget = borrower.monthly_operating_expenses * 2;
+    const reserveGap = Math.max(reserveTarget - borrower.average_bank_balance, 0);
+    const daysToRecover = Math.min(Math.max(borrower.receivable_days - 45, 0), 15);
+    const collectionRelease = borrower.monthly_revenue * daysToRecover / 30;
+    return { emiDiscussionTarget, monthlyRelief, reserveTarget, reserveGap, daysToRecover, collectionRelease };
+  }, [borrower, result.category]);
   const downloadHref = useMemo(() => {
     const lines = [
       "RESTRUCTAI — MSME 90-DAY RISK ANALYSIS",
@@ -139,10 +173,20 @@ export default function Home() {
       "Main model drivers:",
       ...result.drivers.slice(0, 5).map((driver) => `- ${driver.feature}: ${driver.impact > 0 ? "+" : ""}${driver.impact.toFixed(3)} log-odds contribution`),
       "",
+      "Savings conversation plan:",
+      `- EMI discussion anchor: ${money(savingsPlan.emiDiscussionTarget)} per month`,
+      `- Potential monthly EMI relief: ${money(savingsPlan.monthlyRelief)}`,
+      `- Two-month operating reserve gap: ${money(savingsPlan.reserveGap)}`,
+      "",
       "Decision support only. Synthetic-data methodology demonstration; not validated for automatic credit decisions.",
     ];
     return `data:text/plain;charset=utf-8,${encodeURIComponent(lines.join("\n"))}`;
-  }, [result]);
+  }, [result, savingsPlan]);
+
+  useEffect(() => {
+    if (!chatOpen) return;
+    chatLogRef.current?.scrollTo({ top: chatLogRef.current.scrollHeight });
+  }, [chatMessages, chatOpen]);
 
   const updateNumber = (key: keyof BorrowerInput, value: string) => {
     const parsed = value.trim() === "" ? Number.NaN : Number(value);
@@ -192,6 +236,49 @@ export default function Home() {
     setMobileNav(false);
   };
 
+  const coachResponse = (question: string) => {
+    const normalized = question.toLowerCase();
+    const leadingDrivers = result.drivers.filter((driver) => driver.direction === "risk").slice(0, 2).map((driver) => driver.feature).join(" and ");
+    const caution = " Treat this as a lender-discussion aid, not a binding restructuring offer.";
+    if (/logistic|catboost|xgboost|model/.test(normalized)) {
+      const figures = MODEL_BENCHMARK.map((model) => `${model.Model}: ROC–AUC ${model.ROC_AUC.toFixed(4)}, PR–AUC ${model.PR_AUC.toFixed(4)}`).join("; ");
+      return `The three models are producing different results. ${figures}. Logistic Regression was selected for borrower scoring because it had the strongest validation utility; the other two remain portfolio benchmarks.`;
+    }
+    if (/emi|relief|payment|instalment/.test(normalized)) {
+      if (result.category === "Low") return `Current EMI coverage looks manageable. Keep the EMI at ${money(borrower.current_emi)} while preserving at least two months of operating expenses as cash. Avoid extending tenure unless cash flow weakens.`;
+      return `A useful discussion anchor is an EMI near ${money(savingsPlan.emiDiscussionTarget)} per month, about ${money(savingsPlan.monthlyRelief)} below the current EMI. Ask the lender to compare tenure extension, step-up EMI and short moratorium options before choosing.${caution}`;
+    }
+    if (/cash|runway|reserve|saving/.test(normalized)) {
+      return `A two-month operating reserve is ${money(savingsPlan.reserveTarget)}. The current gap is about ${money(savingsPlan.reserveGap)}. Ring-fence collections, pause nonessential capex and sweep a fixed share of weekly receipts into a protected operating reserve.${caution}`;
+    }
+    if (/receivable|collection|invoice/.test(normalized)) {
+      return savingsPlan.daysToRecover > 0
+        ? `Reducing receivable days by ${savingsPlan.daysToRecover} days could release roughly ${money(savingsPlan.collectionRelease)} of working capital. Prioritize the largest overdue invoices, offer selective early-payment discounts and escalate disputed invoices this week.${caution}`
+        : `Receivable days are already near the healthy planning level. Keep weekly ageing reviews and avoid broad discounts that reduce margin.`;
+    }
+    if (/why|risk|score|driver/.test(normalized)) {
+      return `This borrower is ${result.category.toLowerCase()} risk at ${percent(result.probability)}. The leading model pressures are ${leadingDrivers || "the combined financial signals"}; the rule layer also found ${result.warnings.length} early-warning signal${result.warnings.length === 1 ? "" : "s"}. Start with the drivers that can release cash fastest.`;
+    }
+    const planLead = result.category === "Low"
+      ? `Maintain the current EMI, preserve the ${result.cashRunway.toFixed(1)}-month runway and review the score monthly.`
+      : `1) Open a lender conversation around an EMI near ${money(savingsPlan.emiDiscussionTarget)}. 2) Target ${savingsPlan.daysToRecover || 10} fewer receivable days. 3) Build the ${money(savingsPlan.reserveGap)} reserve gap in stages.`;
+    return `${planLead} The current score is ${result.category.toLowerCase()} at ${percent(result.probability)}.${caution}`;
+  };
+
+  const sendChat = (prompt: string) => {
+    const question = prompt.trim();
+    if (!question) return;
+    const userId = nextMessageId.current++;
+    const assistantId = nextMessageId.current++;
+    setChatMessages((current) => [
+      ...current,
+      { id: userId, role: "user", text: question },
+      { id: assistantId, role: "assistant", text: coachResponse(question) },
+    ]);
+    setChatInput("");
+    setChatOpen(true);
+  };
+
   const scoreDegrees = `${result.score * 3.6}deg`;
   const categoryClass = result.category.toLowerCase();
   const maxDriverImpact = Math.max(...result.drivers.map((driver) => Math.abs(driver.impact)), 0.1);
@@ -199,12 +286,13 @@ export default function Home() {
   return (
     <main className="risk-app">
       <aside className={`risk-sidebar ${mobileNav ? "mobile-open" : ""}`} id="primary-sidebar">
-        <button className="brand-mark" onClick={() => scrollTo("analysis")} aria-label="RestructAI home">R</button>
+        <button className="brand-mark" onClick={() => scrollTo("analysis")} aria-label="RestructAI home"><PiggyBank size={21} /></button>
         <nav aria-label="Primary navigation">
           <button className={`nav-item ${activeSection === "analysis" ? "active" : ""}`} onClick={() => scrollTo("analysis")} data-tooltip="Risk analysis" aria-label="Risk analysis" aria-current={activeSection === "analysis" ? "page" : undefined}><LayoutDashboard size={19} /></button>
           <button className={`nav-item ${activeSection === "drivers" ? "active" : ""}`} onClick={() => scrollTo("drivers")} data-tooltip="Risk drivers" aria-label="Risk drivers" aria-current={activeSection === "drivers" ? "page" : undefined}><Activity size={19} /></button>
           <button className={`nav-item ${activeSection === "model-evidence" ? "active" : ""}`} onClick={() => scrollTo("model-evidence")} data-tooltip="Model evidence" aria-label="Model evidence" aria-current={activeSection === "model-evidence" ? "page" : undefined}><BarChart3 size={19} /></button>
           <button className={`nav-item ${activeSection === "methodology" ? "active" : ""}`} onClick={() => scrollTo("methodology")} data-tooltip="Methodology" aria-label="Methodology" aria-current={activeSection === "methodology" ? "page" : undefined}><Database size={19} /></button>
+          <button className="nav-item" onClick={() => setChatOpen(true)} data-tooltip="Savings Coach" aria-label="Open Savings Coach"><Bot size={19} /></button>
         </nav>
         <button className="avatar" aria-label="Analyst account">SK</button>
       </aside>
@@ -212,9 +300,9 @@ export default function Home() {
       <section className="risk-workspace">
         <header className="risk-topbar">
           <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle navigation" aria-controls="primary-sidebar" aria-expanded={mobileNav}>{mobileNav ? <X size={20} /> : <Menu size={20} />}</button>
-          <div className="risk-wordmark">RESTRUCT<span>AI</span></div>
+          <div className="risk-wordmark"><PiggyBank size={17} /> RESTRUCT<span>AI</span></div>
           <div className="top-actions">
-            <span className="secure"><LockKeyhole size={13} /> Local model demo</span>
+            <span className="secure"><PiggyBank size={13} /> Savings mode active</span>
             <span className="model-chip"><FlaskConical size={13} /> Synthetic data • v1.0</span>
           </div>
         </header>
@@ -222,11 +310,11 @@ export default function Home() {
         <div className="risk-content" id="analysis">
           <div className="risk-hero">
             <div>
-              <p className="eyebrow">90-DAY EARLY-WARNING ENGINE</p>
-              <h1>See repayment stress before it becomes default.</h1>
-              <p>Model an MSME&apos;s probability of serious financial stress using cash flow, debt burden, repayment conduct and GST activity.</p>
+              <p className="eyebrow">SAVE CASH • PROTECT CREDIT • GROW AGAIN</p>
+              <h1>Protect cash today. Preserve credit tomorrow.</h1>
+              <p>Spot repayment pressure early, understand what is driving it and turn the result into practical money-saving actions for the business.</p>
             </div>
-            <div className="decision-badge"><ShieldCheck size={18} /><span><b>Decision support</b><small>Not an automatic credit decision</small></span></div>
+            <div className="decision-badge"><PiggyBank size={22} /><span><b>Savings-first guidance</b><small>Protect runway before default</small></span></div>
           </div>
 
           <div className="scenario-strip" aria-label="Borrower scenario presets">
@@ -314,6 +402,11 @@ export default function Home() {
                 <div><span>Cash runway</span><strong className={result.cashRunway < 2 ? "negative" : "positive"}>{result.cashRunway.toFixed(1)} mo</strong><small>{result.cashRunway < 2 ? "Thin buffer" : "Adequate"}</small></div>
               </div>
 
+              <div className="savings-preview">
+                <div><WalletCards size={15} /><span>EMI discussion anchor<b>{money(savingsPlan.emiDiscussionTarget)} / mo</b></span></div>
+                <div><Coins size={15} /><span>Potential monthly relief<b>{money(savingsPlan.monthlyRelief)}</b></span></div>
+              </div>
+
               <div className="warning-panel">
                 <div className="warning-heading"><AlertTriangle size={15} /><span>Early-warning signals</span><b>{result.warnings.length}</b></div>
                 {result.warnings.length ? result.warnings.map((warning) => <p key={warning}><span>!</span>{warning}</p>) : <p className="all-clear"><Check size={13} /> No rule-assisted warnings detected.</p>}
@@ -364,9 +457,10 @@ export default function Home() {
               <div className="benchmark-head"><span>Formal benchmark</span><span>Uncalibrated 0.50 classification threshold for consistent comparison</span></div>
               <div className="benchmark-table" role="table" aria-label="Model benchmark metrics">
                 <div className="benchmark-row header" role="row"><span>Model</span><span>ROC–AUC</span><span>PR–AUC</span><span>Recall</span><span>F1</span><span>Brier</span></div>
-                {MODEL_BENCHMARK.map((model) => <div className={`benchmark-row ${model.Model === MODEL_NAME ? "winner" : ""}`} role="row" key={model.Model}><span>{model.Model}{model.Model === MODEL_NAME && <b>Selected</b>}</span><span>{model.ROC_AUC.toFixed(3)}</span><span>{model.PR_AUC.toFixed(3)}</span><span>{model.Recall.toFixed(3)}</span><span>{model.F1.toFixed(3)}</span><span>{model.Brier_Score.toFixed(3)}</span></div>)}
+                {MODEL_BENCHMARK.map((model) => <div className={`benchmark-row ${model.Model === MODEL_NAME ? "winner" : ""}`} role="row" key={model.Model}><span>{model.Model}{model.Model === MODEL_NAME && <b>Selected</b>}</span><span>{model.ROC_AUC.toFixed(4)}</span><span>{model.PR_AUC.toFixed(4)}</span><span>{model.Recall.toFixed(4)}</span><span>{model.F1.toFixed(4)}</span><span>{model.Brier_Score.toFixed(4)}</span></div>)}
               </div>
             </div>
+            <div className="model-clarity"><CheckCircle2 size={18} /><div><b>Verified: the models are not returning the same figures.</b><p>Logistic Regression and CatBoost looked identical only because ROC–AUC was rounded to three decimals. Their full values are {LOGISTIC_BENCHMARK?.ROC_AUC.toFixed(4)} and {CATBOOST_BENCHMARK?.ROC_AUC.toFixed(4)}. The live borrower score uses the selected {MODEL_NAME} pipeline only.</p></div></div>
           </section>
 
           <section className="methodology-section section-anchor" id="methodology">
@@ -382,12 +476,23 @@ export default function Home() {
           </section>
 
           <footer>
-            <div className="footer-brand"><div className="brand-mark small">R</div><span>RESTRUCTAI</span></div>
+            <div className="footer-brand"><div className="brand-mark small"><PiggyBank size={16} /></div><span>RESTRUCTAI</span></div>
             <p>Results use synthetic data to demonstrate methodology and are not validated real-world credit-risk performance.</p>
             <span>Explainable • Calibrated • Human-reviewed</span>
           </footer>
         </div>
       </section>
+      <button className={`chat-launcher ${chatOpen ? "open" : ""}`} onClick={() => setChatOpen(!chatOpen)} aria-label={chatOpen ? "Close Savings Coach" : "Open Savings Coach"} aria-expanded={chatOpen} aria-controls="savings-coach"><MessageCircle size={18} /><span>Savings Coach</span></button>
+      {chatOpen && <aside className="coach-panel" id="savings-coach" aria-label="Savings Coach">
+        <div className="coach-head"><div className="coach-avatar"><PiggyBank size={19} /></div><div><b>Savings Coach</b><span>Borrower-aware guidance</span></div><button onClick={() => setChatOpen(false)} aria-label="Close Savings Coach"><X size={17} /></button></div>
+        <div className="coach-context"><span className={categoryClass}>{result.category} risk</span><b>{percent(result.probability)}</b><small>Current analyzed borrower</small></div>
+        <div className="coach-messages" role="log" aria-live="polite" ref={chatLogRef}>
+          {chatMessages.map((message) => <div className={`coach-message ${message.role}`} key={message.id}>{message.text}</div>)}
+        </div>
+        <div className="coach-prompts">{QUICK_PROMPTS.map((prompt) => <button key={prompt} onClick={() => sendChat(prompt)}>{prompt}</button>)}</div>
+        <form className="coach-form" onSubmit={(event) => { event.preventDefault(); sendChat(chatInput); }}><input value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Ask about EMI, cash or collections" aria-label="Message Savings Coach" /><button type="submit" aria-label="Send message" disabled={!chatInput.trim()}><Send size={16} /></button></form>
+        <p className="coach-note"><ShieldCheck size={12} /> Illustrative guidance. Confirm terms with the lender.</p>
+      </aside>}
       {toast && <div className="toast" role="status"><CheckCircle2 size={16} />{toast}</div>}
     </main>
   );
@@ -402,5 +507,5 @@ function SelectField({ label, value, options, onChange }: { label: string; value
 }
 
 function MetricCard({ label, value, note, inverse = false }: { label: string; value: number; note: string; inverse?: boolean }) {
-  return <div className="metric-card"><div><span>{label}</span><Info size={12} /></div><strong>{value.toFixed(3)}</strong><p>{note}</p><i className={inverse ? "inverse" : ""} style={{ width: `${Math.min((inverse ? 1 - value : value) * 100, 100)}%` }}></i></div>;
+  return <div className="metric-card"><div><span>{label}</span><Info size={12} /></div><strong>{value.toFixed(4)}</strong><p>{note}</p><i className={inverse ? "inverse" : ""} style={{ width: `${Math.min((inverse ? 1 - value : value) * 100, 100)}%` }}></i></div>;
 }

@@ -21,6 +21,7 @@ ROOT = PROJECT.parent
 MODEL_PATH = PROJECT / "models" / "risk_model.joblib"
 WEB_ARTIFACT_PATH = ROOT / "app" / "risk-model-artifact.json"
 DATA_PATH = PROJECT / "data" / "synthetic_msme_data.csv"
+MODEL_COMPARISON_PATH = PROJECT / "reports" / "model_comparison.csv"
 
 STRESSED = {
     "industry": "Textile",
@@ -188,6 +189,21 @@ def test_saved_metrics_reproduce_on_untouched_test_partition() -> None:
     reproduced = classification_metrics(y_test.to_numpy(), calibrated, float(artifact["threshold"]))
     for metric, expected in artifact["test_metrics"].items():
         assert reproduced[metric] == pytest.approx(expected, abs=1e-12)
+
+
+def test_benchmark_models_have_distinct_full_precision_results() -> None:
+    """Guard against accidentally reusing one model's metrics for every benchmark row."""
+    comparison = pd.read_csv(MODEL_COMPARISON_PATH)
+    expected_models = {"Logistic Regression", "CatBoost", "XGBoost"}
+    metrics = ["ROC_AUC", "PR_AUC", "Recall", "Precision", "F1", "Brier_Score"]
+
+    assert set(comparison["Model"]) == expected_models
+    assert len(comparison) == len(expected_models)
+    assert not comparison[metrics].duplicated().any()
+    assert comparison["ROC_AUC"].nunique() == len(expected_models)
+
+    roc_auc = comparison.set_index("Model")["ROC_AUC"]
+    assert abs(roc_auc["Logistic Regression"] - roc_auc["CatBoost"]) > 1e-6
 
 
 def test_synthetic_dataset_contract() -> None:
