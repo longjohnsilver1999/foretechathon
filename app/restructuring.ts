@@ -20,6 +20,13 @@ export type RestructuringPlan = PlanTerms & {
   monthlyRelief: number;
   projectedDscr: number;
   affordableEmiCap: number;
+  requiredMonthlyCashFlow: number;
+  cashFlowGap: number;
+  emiCoverageGap: number;
+  dscrGap: number;
+  tenureCapReached: boolean;
+  feasibilitySummary: string;
+  feasibilityReasons: string[];
   capitalizedPrincipal: number;
   totalRepayment: number;
   totalInterest: number;
@@ -92,6 +99,55 @@ export function buildRestructuringPlan(
     : emi <= affordableEmiCap
       ? "Comfortable"
       : "Tight";
+  const availableCashFlow = Math.max(borrower.free_cash_flow, 0);
+  const requiredMonthlyCashFlow = emi * TARGET_DSCR;
+  const cashFlowGap = Math.max(requiredMonthlyCashFlow - availableCashFlow, 0);
+  const emiCoverageGap = Math.max(emi - availableCashFlow, 0);
+  const dscrGap = Math.max(TARGET_DSCR - projectedDscr, 0);
+  const tenureCapReached = totalTenureMonths === MAX_PLANNING_TENURE;
+  const feasibilityReasons: string[] = [];
+
+  if (borrower.free_cash_flow <= 0) {
+    feasibilityReasons.push("The business has no positive monthly free cash flow available for debt service.");
+  } else if (emiCoverageGap > 0) {
+    feasibilityReasons.push(
+      `The proposed EMI exceeds available monthly free cash flow by ₹${Math.round(emiCoverageGap).toLocaleString("en-IN")}.`,
+    );
+    feasibilityReasons.push(
+      `Projected DSCR is ${projectedDscr.toFixed(2)}x, below the 1.00x level needed to cover one full instalment.`,
+    );
+  } else if (cashFlowGap > 0) {
+    feasibilityReasons.push(
+      `The EMI is covered, but projected DSCR is ${projectedDscr.toFixed(2)}x, below the ${TARGET_DSCR.toFixed(2)}x planning target.`,
+    );
+  }
+
+  if (cashFlowGap > 0) {
+    feasibilityReasons.push(
+      `${TARGET_DSCR.toFixed(2)}x coverage requires ₹${Math.round(requiredMonthlyCashFlow).toLocaleString("en-IN")} of monthly free cash flow, a gap of ₹${Math.round(cashFlowGap).toLocaleString("en-IN")}.`,
+    );
+  }
+
+  if (tenureCapReached && cashFlowGap > 0) {
+    feasibilityReasons.push(
+      `The plan already uses the ${MAX_PLANNING_TENURE}-month planning cap, so tenure extension within this tool cannot close the gap.`,
+    );
+  }
+
+  if (moratoriumMonths > 0 && feasibility === "Not feasible") {
+    const capitalizedInterest = Math.max(capitalizedPrincipal - borrower.outstanding_loan_amount, 0);
+    feasibilityReasons.push(
+      `The payment pause capitalizes about ₹${Math.round(capitalizedInterest).toLocaleString("en-IN")} of interest before repayment begins.`,
+    );
+  }
+
+  const feasibilitySummary = feasibility === "Comfortable"
+    ? `${projectedDscr.toFixed(2)}x DSCR meets the ${TARGET_DSCR.toFixed(2)}x target.`
+    : feasibility === "Tight"
+      ? `₹${Math.round(cashFlowGap).toLocaleString("en-IN")} more monthly free cash flow is needed for the ${TARGET_DSCR.toFixed(2)}x target.`
+      : borrower.free_cash_flow <= 0
+        ? "No positive monthly free cash flow is available to service an EMI."
+        : `The EMI is ₹${Math.round(emiCoverageGap).toLocaleString("en-IN")} above available monthly free cash flow.`;
 
   return {
     ...metadata,
@@ -102,6 +158,13 @@ export function buildRestructuringPlan(
     monthlyRelief,
     projectedDscr,
     affordableEmiCap,
+    requiredMonthlyCashFlow,
+    cashFlowGap,
+    emiCoverageGap,
+    dscrGap,
+    tenureCapReached,
+    feasibilitySummary,
+    feasibilityReasons,
     capitalizedPrincipal,
     totalRepayment,
     totalInterest: Math.max(totalRepayment - borrower.outstanding_loan_amount, 0),

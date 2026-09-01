@@ -64,12 +64,19 @@ test("generated plans are distinct and expose cost, relief and feasibility", () 
     assert.ok(plan.emi > 0);
     assert.ok(plan.totalRepayment > stressedBorrower.outstanding_loan_amount);
     assert.ok(Number.isFinite(plan.projectedDscr));
+    assert.ok(Math.abs(plan.requiredMonthlyCashFlow - plan.emi * TARGET_DSCR) < 0.001);
+    assert.equal(plan.emiCoverageGap, Math.max(plan.emi - stressedBorrower.free_cash_flow, 0));
+    assert.equal(plan.cashFlowGap, Math.max(plan.requiredMonthlyCashFlow - stressedBorrower.free_cash_flow, 0));
+    assert.ok(plan.feasibilitySummary.length > 0);
   });
   const recommended = getRecommendedPlan(plans);
   assert.equal(recommended.id, "cash-flow-fit");
   assert.equal(recommended.feasibility, "Comfortable");
   assert.ok(recommended.monthlyRelief > 0);
   assert.ok(recommended.projectedDscr >= TARGET_DSCR);
+  assert.equal(recommended.cashFlowGap, 0);
+  assert.equal(recommended.emiCoverageGap, 0);
+  assert.deepEqual(recommended.feasibilityReasons, []);
 });
 
 test("moratorium capitalises interest and increases the repayment base", () => {
@@ -92,6 +99,16 @@ test("critical cash flow is escalated when EMI-only restructuring cannot restore
   };
   const plans = generateRestructuringPlans(criticalBorrower);
   assert.ok(plans.every((plan) => plan.feasibility === "Not feasible"));
+  assert.ok(plans.every((plan) => plan.emiCoverageGap > 0));
+  assert.ok(plans.every((plan) => plan.cashFlowGap > plan.emiCoverageGap));
+  assert.ok(plans.every((plan) => plan.tenureCapReached));
+  assert.ok(plans.every((plan) => plan.feasibilityReasons.length >= 3));
+  plans.forEach((plan) => {
+    assert.match(plan.feasibilitySummary, /above available monthly free cash flow/);
+    assert.ok(plan.feasibilityReasons.some((reason) => /exceeds available monthly free cash flow/.test(reason)));
+    assert.ok(plan.feasibilityReasons.some((reason) => /1\.00x level/.test(reason)));
+    assert.ok(plan.feasibilityReasons.some((reason) => /120-month planning cap/.test(reason)));
+  });
 
   const timing = getRestructuringTiming(criticalBorrower, {
     probability: 0.99,
@@ -107,4 +124,18 @@ test("critical cash flow is escalated when EMI-only restructuring cannot restore
   });
   assert.equal(timing.label, "Act today");
   assert.match(timing.summary, /EMI-only relief may be insufficient/);
+});
+
+test("zero free cash flow produces an explicit non-feasibility reason", () => {
+  const plan = buildRestructuringPlan(
+    { ...stressedBorrower, free_cash_flow: 0 },
+    { annualRate: 10, totalTenureMonths: 120, moratoriumMonths: 0 },
+    { id: "zero-cash", name: "Zero cash", description: "Test", assumption: "Test" },
+  );
+
+  assert.equal(plan.feasibility, "Not feasible");
+  assert.equal(plan.affordableEmiCap, 0);
+  assert.equal(plan.requiredMonthlyCashFlow, plan.emi * TARGET_DSCR);
+  assert.match(plan.feasibilitySummary, /No positive monthly free cash flow/);
+  assert.ok(plan.feasibilityReasons.some((reason) => /no positive monthly free cash flow/i.test(reason)));
 });

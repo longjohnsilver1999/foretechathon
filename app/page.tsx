@@ -48,6 +48,8 @@ import {
   validateBorrower,
 } from "./risk-model";
 import {
+  MAX_PLANNING_TENURE,
+  TARGET_DSCR,
   type PlanTerms,
   buildRestructuringPlan,
   generateRestructuringPlans,
@@ -61,6 +63,7 @@ type ChatMessage = { id: number; role: "assistant" | "user"; text: string; sourc
 
 const QUICK_PROMPTS = [
   "Compare restructuring plans",
+  "Why is this plan not feasible?",
   "When should I restructure?",
   "How much EMI relief?",
   "Why this risk score?",
@@ -220,6 +223,8 @@ export default function Home() {
       `- Potential monthly EMI relief: ${money(Math.max(selectedPlan.monthlyRelief, 0))}`,
       `- Proposed rate / total tenure / moratorium: ${selectedPlan.annualRate.toFixed(1)}% / ${selectedPlan.totalTenureMonths} months / ${selectedPlan.moratoriumMonths} months`,
       `- Projected DSCR: ${selectedPlan.projectedDscr.toFixed(2)}x`,
+      `- Feasibility: ${selectedPlan.feasibility} — ${selectedPlan.feasibilitySummary}`,
+      ...selectedPlan.feasibilityReasons.map((reason) => `  - ${reason}`),
       `- Estimated total interest: ${money(selectedPlan.totalInterest)}`,
       `- Two-month operating reserve gap: ${money(savingsPlan.reserveGap)}`,
       "",
@@ -316,6 +321,18 @@ export default function Home() {
     const normalized = question.toLowerCase();
     const leadingDrivers = result.drivers.filter((driver) => driver.direction === "risk").slice(0, 2).map((driver) => driver.feature).join(" and ");
     const caution = " Treat this as a lender-discussion aid, not a binding restructuring offer.";
+    if (/not feasible|infeasible|why.*feasib/.test(normalized)) {
+      if (selectedPlan.feasibility === "Not feasible") {
+        const capNote = selectedPlan.tenureCapReached
+          ? ` The plan is already at the ${MAX_PLANNING_TENURE}-month planning cap, so this calculator cannot solve the shortfall by extending tenure further.`
+          : " A lower approved rate or longer approved tenure may reduce the EMI, but the resulting cost and viability must be reassessed.";
+        return `This is a cash-flow viability result, not a model error. The ${selectedPlan.name} EMI is ${money(selectedPlan.emi)}, while available monthly free cash flow is ${money(Math.max(borrower.free_cash_flow, 0))}; it is short by ${money(selectedPlan.emiCoverageGap)} even before a safety buffer. Projected DSCR is ${selectedPlan.projectedDscr.toFixed(2)}x. To reach the ${TARGET_DSCR.toFixed(2)}x target, free cash flow must be at least ${money(selectedPlan.requiredMonthlyCashFlow)}, a monthly gap of ${money(selectedPlan.cashFlowGap)}, or the EMI must fall to ${money(selectedPlan.affordableEmiCap)} or less.${capNote} Ask the lender to assess a combined rate concession, principal correction, working-capital support and business cash-flow recovery.${caution}`;
+      }
+      if (selectedPlan.feasibility === "Tight") {
+        return `This selected plan is Tight, not Not feasible: monthly free cash flow covers the ${money(selectedPlan.emi)} EMI, but ${selectedPlan.projectedDscr.toFixed(2)}x DSCR is below the ${TARGET_DSCR.toFixed(2)}x planning target. Another ${money(selectedPlan.cashFlowGap)} of monthly free cash flow, or an EMI at or below ${money(selectedPlan.affordableEmiCap)}, would restore the target buffer.${caution}`;
+      }
+      return `This selected plan is Comfortable, not Not feasible. Its ${money(selectedPlan.emi)} EMI is within the ${money(selectedPlan.affordableEmiCap)} cash-flow-based cap and produces ${selectedPlan.projectedDscr.toFixed(2)}x DSCR, meeting the ${TARGET_DSCR.toFixed(2)}x target.${caution}`;
+    }
     if (/logistic|catboost|xgboost|model/.test(normalized)) {
       const figures = MODEL_BENCHMARK.map((model) => `${model.Model}: ROC–AUC ${model.ROC_AUC.toFixed(4)}, PR–AUC ${model.PR_AUC.toFixed(4)}`).join("; ");
       return `${selectedModel} is currently scoring this borrower at ${percent(result.probability)}. All three engines are live and produce different fitted predictions. Held-out results: ${figures}. Switch models above the borrower form to compare them on the same inputs.`;
@@ -531,6 +548,7 @@ export default function Home() {
                   <small>{plan.description}</small>
                   <span className="plan-emi">{money(plan.emi)}<i>/ month</i></span>
                   <span className="plan-terms">{plan.annualRate.toFixed(1)}% • {plan.totalTenureMonths} months • {plan.moratoriumMonths ? `${plan.moratoriumMonths}-month pause` : "no pause"}</span>
+                  <span className={`plan-feasibility-detail ${plan.feasibility.toLowerCase().replace(" ", "-")}`}>{plan.feasibilitySummary}</span>
                 </button>
               ))}
             </div>
@@ -557,7 +575,18 @@ export default function Home() {
                   <div className="model-whatif-icon"><SlidersHorizontal size={17} /></div>
                   <div><span>MODEL WHAT-IF • EMI CHANGED, OTHER INPUTS HELD CONSTANT</span><p><b>{percent(result.probability)}</b><ArrowRight size={14} /><strong>{percent(projectedResult.probability)}</strong></p><small>{modelProbabilityImprovement > 0 ? `${percentagePoints(modelProbabilityImprovement)} lower projected stress probability` : "No modelled probability improvement from these terms"}. This is a scenario simulation, not a promised outcome.</small></div>
                 </div>
-                {selectedPlan.feasibility === "Not feasible" && <div className="not-feasible-note"><AlertTriangle size={15} /><span><b>EMI-only restructuring is insufficient.</b> The proposed EMI still exceeds current free cash flow. The lender should assess business viability, working-capital support and deeper corrective action.</span></div>}
+                {selectedPlan.feasibility === "Not feasible" && <div className="not-feasible-note">
+                  <div className="not-feasible-title"><AlertTriangle size={17} /><div><b>Why this plan is not feasible</b><span>Cash-flow viability result — not a model error</span></div></div>
+                  <div className="feasibility-math" aria-label="Plan feasibility calculation">
+                    <div><span>Available monthly FCF</span><b>{money(Math.max(borrower.free_cash_flow, 0))}</b></div>
+                    <i>vs</i>
+                    <div><span>Proposed EMI</span><b>{money(selectedPlan.emi)}</b></div>
+                    <i>→</i>
+                    <div className="gap"><span>Basic payment shortfall</span><b>{money(selectedPlan.emiCoverageGap)}</b></div>
+                  </div>
+                  <ul>{selectedPlan.feasibilityReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+                  <div className="feasibility-fix"><b>What would make it cash-flow feasible?</b><p>For a {TARGET_DSCR.toFixed(2)}x safety buffer, free cash flow must reach <strong>{money(selectedPlan.requiredMonthlyCashFlow)}</strong>—an increase of <strong>{money(selectedPlan.cashFlowGap)} per month</strong>—or the EMI must fall to <strong>{money(selectedPlan.affordableEmiCap)} or less</strong>.</p><p>{selectedPlan.tenureCapReached ? `Because this plan is already at the ${MAX_PLANNING_TENURE}-month planning cap, ask the lender to assess a combined rate concession, principal correction or working-capital support alongside verified cash-flow recovery.` : "Try a lower rate or longer tenure above, then confirm the full interest cost and revised schedule with the lender."}</p></div>
+                </div>}
               </div>
             </div>
 
