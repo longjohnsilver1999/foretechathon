@@ -22,6 +22,12 @@ test("server-renders the RestructAI stress-risk advisor", async () => {
   assert.match(html, /<title>RestructAI — 90-Day MSME Stress Risk<\/title>/i);
   assert.match(html, /Protect cash today\. Preserve credit tomorrow\./);
   assert.match(html, /Run 90-day risk analysis/);
+  assert.match(html, /See how—and when—to change the schedule/);
+  assert.match(html, /Cash-flow fit/);
+  assert.match(html, /Rate \+ tenure/);
+  assert.match(html, /3-month bridge/);
+  assert.match(html, /MODEL WHAT-IF/);
+  assert.match(html, /Do not change payments on your own\./);
   assert.match(html, /Savings Coach/);
   assert.match(html, /Verified: the models are not returning the same figures\./);
   assert.match(html, /0\.9392/);

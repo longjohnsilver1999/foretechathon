@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "RestructAI — 90-Day MSME Stress Risk",
   description:
-    "An explainable, calibrated 90-day financial-stress risk engine for Indian MSMEs.",
+    "An explainable 90-day MSME stress-risk engine with interactive, cash-flow-based EMI restructuring scenarios.",
 };
 
 export default function RootLayout({

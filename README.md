@@ -10,7 +10,11 @@ RestructAI is an explainable 90-day financial-stress prediction system for India
 - Probability calibration, threshold optimization, SHAP/coefficient explanations and early-warning rules.
 - Persisted single-borrower inference through `predict_msme_risk(data)`.
 - An interactive risk dashboard with editable borrower inputs, scenario presets and downloadable analysis.
+- A cash-flow-based EMI restructuring studio that compares tenure extension, rate-plus-tenure and short-bridge scenarios, including monthly relief, DSCR, lifetime cost and a live model what-if.
+- A borrower-aware Savings Coach that explains when to approach the lender and how the selected plan changes the repayment discussion.
 
 The modelling project, methodology, limitations and commands are documented in [restructai/README.md](restructai/README.md).
 
 All displayed performance numbers come from the checked-in experiment outputs. Results use synthetic data to demonstrate methodology and must not be interpreted as validated real-world credit-risk performance or automatic credit decisions.
+
+The restructuring plans are illustrative amortisation scenarios. Borrowers must continue their contractual payments until a lender formally approves revised terms in writing.

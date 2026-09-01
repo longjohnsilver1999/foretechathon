@@ -161,6 +161,18 @@ def test_scenario_risk_ordering_and_buckets() -> None:
     assert critical["risk_category"] == "Critical"
 
 
+def test_cash_flow_fit_emi_what_if_reduces_modelled_stress() -> None:
+    current = predict_advisor_risk(STRESSED, model_path=MODEL_PATH)
+    cash_flow_fit_emi = STRESSED["free_cash_flow"] / 1.2
+    projected = predict_advisor_risk(
+        {**STRESSED, "current_emi": cash_flow_fit_emi},
+        model_path=MODEL_PATH,
+    )
+
+    assert projected["probability_of_stress"] < current["probability_of_stress"]
+    assert current["probability_of_stress"] - projected["probability_of_stress"] > 0.01
+
+
 def test_advisor_validation_rejects_impossible_inputs() -> None:
     invalid = {
         **STRESSED,

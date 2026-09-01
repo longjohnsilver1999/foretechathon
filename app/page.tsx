@@ -7,6 +7,8 @@ import {
   ArrowRight,
   BarChart3,
   Bot,
+  Calculator,
+  CalendarClock,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -16,6 +18,7 @@ import {
   Download,
   FlaskConical,
   Info,
+  Landmark,
   LayoutDashboard,
   Menu,
   MessageCircle,
@@ -23,6 +26,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Send,
+  SlidersHorizontal,
   Sparkles,
   TrendingDown,
   TrendingUp,
@@ -39,14 +43,22 @@ import {
   scoreBorrower,
   validateBorrower,
 } from "./risk-model";
+import {
+  type PlanTerms,
+  buildRestructuringPlan,
+  generateRestructuringPlans,
+  getRecommendedPlan,
+  getRestructuringTiming,
+  shouldRestructure,
+} from "./restructuring";
 
 type InputTab = "financial" | "debt" | "conduct" | "business";
 type ChatMessage = { id: number; role: "assistant" | "user"; text: string };
 
 const QUICK_PROMPTS = [
-  "Build my action plan",
+  "Compare restructuring plans",
+  "When should I restructure?",
   "How much EMI relief?",
-  "Improve cash runway",
   "Why this risk score?",
 ];
 
@@ -129,6 +141,7 @@ const scenarioPresets: Record<string, Partial<BorrowerInput>> = {
 
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
 const money = (value: number) => `₹${Math.round(value).toLocaleString("en-IN")}`;
+const percentagePoints = (value: number) => `${Math.abs(value * 100).toFixed(1)} pp`;
 
 export default function Home() {
   const [draft, setDraft] = useState<BorrowerInput>(stressedBorrower);
@@ -140,6 +153,8 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
+  const [selectedPlanId, setSelectedPlanId] = useState("cash-flow-fit");
+  const [planOverrides, setPlanOverrides] = useState<PlanTerms | null>(null);
   const nextMessageId = useRef(2);
   const chatLogRef = useRef<HTMLDivElement>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
@@ -147,16 +162,38 @@ export default function Home() {
   ]);
   const result = useMemo(() => scoreBorrower(borrower), [borrower]);
   const validationIssues = useMemo(() => validateBorrower(draft), [draft]);
+  const planOptions = useMemo(() => generateRestructuringPlans(borrower), [borrower]);
+  const recommendedPlan = useMemo(() => getRecommendedPlan(planOptions), [planOptions]);
+  const selectedBasePlan = planOptions.find((plan) => plan.id === selectedPlanId) ?? recommendedPlan;
+  const selectedPlan = useMemo(() => planOverrides
+    ? buildRestructuringPlan(
+        borrower,
+        planOverrides,
+        {
+          id: selectedBasePlan.id,
+          name: `Custom ${selectedBasePlan.name}`,
+          description: "A live what-if plan using the terms selected below.",
+          assumption: "Illustrative terms only; the lender must validate and approve the final schedule.",
+        },
+      )
+    : selectedBasePlan,
+  [borrower, planOverrides, selectedBasePlan]);
+  const projectedResult = useMemo(
+    () => scoreBorrower({ ...borrower, current_emi: Math.max(selectedPlan.emi, 1) }),
+    [borrower, selectedPlan.emi],
+  );
+  const restructuringTiming = useMemo(() => getRestructuringTiming(borrower, result), [borrower, result]);
+  const restructuringNeeded = useMemo(() => shouldRestructure(borrower, result), [borrower, result]);
+  const modelProbabilityImprovement = result.probability - projectedResult.probability;
   const savingsPlan = useMemo(() => {
-    const affordableEmi = Math.max(borrower.free_cash_flow, 0) * 0.7;
-    const emiDiscussionTarget = result.category === "Low" ? borrower.current_emi : Math.min(borrower.current_emi, affordableEmi);
+    const emiDiscussionTarget = result.category === "Low" ? borrower.current_emi : recommendedPlan.emi;
     const monthlyRelief = Math.max(borrower.current_emi - emiDiscussionTarget, 0);
     const reserveTarget = borrower.monthly_operating_expenses * 2;
     const reserveGap = Math.max(reserveTarget - borrower.average_bank_balance, 0);
     const daysToRecover = Math.min(Math.max(borrower.receivable_days - 45, 0), 15);
     const collectionRelease = borrower.monthly_revenue * daysToRecover / 30;
     return { emiDiscussionTarget, monthlyRelief, reserveTarget, reserveGap, daysToRecover, collectionRelease };
-  }, [borrower, result.category]);
+  }, [borrower, recommendedPlan.emi, result.category]);
   const downloadHref = useMemo(() => {
     const lines = [
       "RESTRUCTAI — MSME 90-DAY RISK ANALYSIS",
@@ -174,14 +211,19 @@ export default function Home() {
       ...result.drivers.slice(0, 5).map((driver) => `- ${driver.feature}: ${driver.impact > 0 ? "+" : ""}${driver.impact.toFixed(3)} log-odds contribution`),
       "",
       "Savings conversation plan:",
-      `- EMI discussion anchor: ${money(savingsPlan.emiDiscussionTarget)} per month`,
-      `- Potential monthly EMI relief: ${money(savingsPlan.monthlyRelief)}`,
+      `- Timing recommendation: ${restructuringTiming.label}`,
+      `- Selected option: ${selectedPlan.name}`,
+      `- Illustrative EMI: ${money(selectedPlan.emi)} per month`,
+      `- Potential monthly EMI relief: ${money(Math.max(selectedPlan.monthlyRelief, 0))}`,
+      `- Proposed rate / total tenure / moratorium: ${selectedPlan.annualRate.toFixed(1)}% / ${selectedPlan.totalTenureMonths} months / ${selectedPlan.moratoriumMonths} months`,
+      `- Projected DSCR: ${selectedPlan.projectedDscr.toFixed(2)}x`,
+      `- Estimated total interest: ${money(selectedPlan.totalInterest)}`,
       `- Two-month operating reserve gap: ${money(savingsPlan.reserveGap)}`,
       "",
       "Decision support only. Synthetic-data methodology demonstration; not validated for automatic credit decisions.",
     ];
     return `data:text/plain;charset=utf-8,${encodeURIComponent(lines.join("\n"))}`;
-  }, [result, savingsPlan]);
+  }, [result, restructuringTiming.label, selectedPlan, savingsPlan.reserveGap]);
 
   useEffect(() => {
     if (!chatOpen) return;
@@ -207,9 +249,12 @@ export default function Home() {
 
   const choosePreset = (name: string) => {
     const next = { ...stressedBorrower, ...scenarioPresets[name] };
+    const nextRecommended = getRecommendedPlan(generateRestructuringPlans(next));
     setDraft(next);
     setBorrower(next);
     setActivePreset(name);
+    setSelectedPlanId(nextRecommended.id);
+    setPlanOverrides(null);
     setToast(`${name} scenario loaded and rescored.`);
     window.setTimeout(() => setToast(""), 2200);
   };
@@ -220,7 +265,10 @@ export default function Home() {
       window.setTimeout(() => setToast(""), 3200);
       return;
     }
+    const nextRecommended = getRecommendedPlan(generateRestructuringPlans(draft));
     setBorrower(draft);
+    setSelectedPlanId(nextRecommended.id);
+    setPlanOverrides(null);
     setToast("90-day stress analysis updated.");
     window.setTimeout(() => setToast(""), 2200);
   };
@@ -236,6 +284,25 @@ export default function Home() {
     setMobileNav(false);
   };
 
+  const choosePlan = (id: string) => {
+    setSelectedPlanId(id);
+    setPlanOverrides(null);
+  };
+
+  const updatePlanTerms = (changes: Partial<PlanTerms>) => {
+    setPlanOverrides((current) => ({
+      annualRate: current?.annualRate ?? selectedPlan.annualRate,
+      totalTenureMonths: current?.totalTenureMonths ?? selectedPlan.totalTenureMonths,
+      moratoriumMonths: current?.moratoriumMonths ?? selectedPlan.moratoriumMonths,
+      ...changes,
+    }));
+  };
+
+  const resetToRecommendedPlan = () => {
+    setSelectedPlanId(recommendedPlan.id);
+    setPlanOverrides(null);
+  };
+
   const coachResponse = (question: string) => {
     const normalized = question.toLowerCase();
     const leadingDrivers = result.drivers.filter((driver) => driver.direction === "risk").slice(0, 2).map((driver) => driver.feature).join(" and ");
@@ -244,9 +311,16 @@ export default function Home() {
       const figures = MODEL_BENCHMARK.map((model) => `${model.Model}: ROC–AUC ${model.ROC_AUC.toFixed(4)}, PR–AUC ${model.PR_AUC.toFixed(4)}`).join("; ");
       return `The three models are producing different results. ${figures}. Logistic Regression was selected for borrower scoring because it had the strongest validation utility; the other two remain portfolio benchmarks.`;
     }
+    if (/when|timing|too late|now/.test(normalized)) {
+      return `${restructuringTiming.label}. ${restructuringTiming.summary} Trigger: ${restructuringTiming.trigger}. Keep paying the contractual EMI until the lender approves revised terms in writing.${caution}`;
+    }
+    if (/restruct|plan|tenure|moratorium|refinance|option|compare/.test(normalized)) {
+      if (!restructuringNeeded) return `The current schedule is covered, so restructuring is not recommended now. Monitor monthly and reconsider if DSCR falls below 1.2x, runway drops below two months or an EMI is delayed.${caution}`;
+      return `The current best discussion anchor is ${recommendedPlan.name}: about ${money(recommendedPlan.emi)} per month for ${recommendedPlan.totalTenureMonths} months at ${recommendedPlan.annualRate.toFixed(1)}%, producing ${recommendedPlan.projectedDscr.toFixed(2)}x projected DSCR. It may relieve about ${money(Math.max(recommendedPlan.monthlyRelief, 0))} per month, while estimated total interest becomes ${money(recommendedPlan.totalInterest)}. Compare it with the rate-concession and short-bridge options in the Restructuring Studio.${caution}`;
+    }
     if (/emi|relief|payment|instalment/.test(normalized)) {
       if (result.category === "Low") return `Current EMI coverage looks manageable. Keep the EMI at ${money(borrower.current_emi)} while preserving at least two months of operating expenses as cash. Avoid extending tenure unless cash flow weakens.`;
-      return `A useful discussion anchor is an EMI near ${money(savingsPlan.emiDiscussionTarget)} per month, about ${money(savingsPlan.monthlyRelief)} below the current EMI. Ask the lender to compare tenure extension, step-up EMI and short moratorium options before choosing.${caution}`;
+      return `The ${recommendedPlan.name} option produces an illustrative EMI near ${money(recommendedPlan.emi)} per month, about ${money(Math.max(recommendedPlan.monthlyRelief, 0))} below the current EMI. It targets ${recommendedPlan.projectedDscr.toFixed(2)}x cash coverage over ${recommendedPlan.totalTenureMonths} months. Review the added interest cost before choosing.${caution}`;
     }
     if (/cash|runway|reserve|saving/.test(normalized)) {
       return `A two-month operating reserve is ${money(savingsPlan.reserveTarget)}. The current gap is about ${money(savingsPlan.reserveGap)}. Ring-fence collections, pause nonessential capex and sweep a fixed share of weekly receipts into a protected operating reserve.${caution}`;
@@ -261,7 +335,7 @@ export default function Home() {
     }
     const planLead = result.category === "Low"
       ? `Maintain the current EMI, preserve the ${result.cashRunway.toFixed(1)}-month runway and review the score monthly.`
-      : `1) Open a lender conversation around an EMI near ${money(savingsPlan.emiDiscussionTarget)}. 2) Target ${savingsPlan.daysToRecover || 10} fewer receivable days. 3) Build the ${money(savingsPlan.reserveGap)} reserve gap in stages.`;
+      : `1) ${restructuringTiming.label}: discuss the ${recommendedPlan.name} EMI of about ${money(recommendedPlan.emi)}. 2) Target ${savingsPlan.daysToRecover || 10} fewer receivable days. 3) Build the ${money(savingsPlan.reserveGap)} reserve gap in stages.`;
     return `${planLead} The current score is ${result.category.toLowerCase()} at ${percent(result.probability)}.${caution}`;
   };
 
@@ -289,6 +363,7 @@ export default function Home() {
         <button className="brand-mark" onClick={() => scrollTo("analysis")} aria-label="RestructAI home"><PiggyBank size={21} /></button>
         <nav aria-label="Primary navigation">
           <button className={`nav-item ${activeSection === "analysis" ? "active" : ""}`} onClick={() => scrollTo("analysis")} data-tooltip="Risk analysis" aria-label="Risk analysis" aria-current={activeSection === "analysis" ? "page" : undefined}><LayoutDashboard size={19} /></button>
+          <button className={`nav-item ${activeSection === "restructure" ? "active" : ""}`} onClick={() => scrollTo("restructure")} data-tooltip="Restructuring studio" aria-label="Restructuring studio" aria-current={activeSection === "restructure" ? "page" : undefined}><Landmark size={19} /></button>
           <button className={`nav-item ${activeSection === "drivers" ? "active" : ""}`} onClick={() => scrollTo("drivers")} data-tooltip="Risk drivers" aria-label="Risk drivers" aria-current={activeSection === "drivers" ? "page" : undefined}><Activity size={19} /></button>
           <button className={`nav-item ${activeSection === "model-evidence" ? "active" : ""}`} onClick={() => scrollTo("model-evidence")} data-tooltip="Model evidence" aria-label="Model evidence" aria-current={activeSection === "model-evidence" ? "page" : undefined}><BarChart3 size={19} /></button>
           <button className={`nav-item ${activeSection === "methodology" ? "active" : ""}`} onClick={() => scrollTo("methodology")} data-tooltip="Methodology" aria-label="Methodology" aria-current={activeSection === "methodology" ? "page" : undefined}><Database size={19} /></button>
@@ -406,6 +481,7 @@ export default function Home() {
                 <div><WalletCards size={15} /><span>EMI discussion anchor<b>{money(savingsPlan.emiDiscussionTarget)} / mo</b></span></div>
                 <div><Coins size={15} /><span>Potential monthly relief<b>{money(savingsPlan.monthlyRelief)}</b></span></div>
               </div>
+              <button className="plan-jump" type="button" onClick={() => scrollTo("restructure")}><Calculator size={15} /> Compare realistic restructuring plans <ArrowRight size={14} /></button>
 
               <div className="warning-panel">
                 <div className="warning-heading"><AlertTriangle size={15} /><span>Early-warning signals</span><b>{result.warnings.length}</b></div>
@@ -414,6 +490,63 @@ export default function Home() {
               <a className="download-button" href={downloadHref} download="restructai-risk-analysis.txt" onClick={confirmDownload}><Download size={15} /> Download risk analysis</a>
               <small className="result-disclaimer">Calibrated probability • Synthetic-data methodology demo</small>
             </section>
+          </section>
+
+          <section className="restructure-studio section-anchor" id="restructure">
+            <div className="section-heading restructure-heading">
+              <div><p className="eyebrow">INTERACTIVE EMI RESTRUCTURING</p><h2>See how—and when—to change the schedule</h2><p>Compare cash-flow-based repayment structures, adjust the terms and see affordability, lifetime cost and the model&apos;s EMI-only what-if response update together.</p></div>
+              <span className="explain-badge"><Calculator size={13} /> Amortisation + live model simulation</span>
+            </div>
+
+            <div className={`timing-banner ${restructuringTiming.tone}`}>
+              <div className="timing-icon"><CalendarClock size={22} /></div>
+              <div><span>WHEN TO RESTRUCTURE</span><h3>{restructuringTiming.label}</h3><p>{restructuringTiming.summary}</p></div>
+              <div className="timing-trigger"><b>Trigger</b><span>{restructuringTiming.trigger}</span></div>
+            </div>
+
+            <div className="plan-options" role="group" aria-label="Restructuring plan options">
+              {planOptions.map((plan) => (
+                <button key={plan.id} className={`plan-option ${selectedBasePlan.id === plan.id ? "selected" : ""}`} onClick={() => choosePlan(plan.id)} aria-pressed={selectedBasePlan.id === plan.id}>
+                  <span className="plan-option-top"><i className={plan.feasibility.toLowerCase().replace(" ", "-")}>{plan.feasibility}</i>{restructuringNeeded && plan.id === recommendedPlan.id && <b>Recommended</b>}</span>
+                  <strong>{plan.name}</strong>
+                  <small>{plan.description}</small>
+                  <span className="plan-emi">{money(plan.emi)}<i>/ month</i></span>
+                  <span className="plan-terms">{plan.annualRate.toFixed(1)}% • {plan.totalTenureMonths} months • {plan.moratoriumMonths ? `${plan.moratoriumMonths}-month pause` : "no pause"}</span>
+                </button>
+              ))}
+            </div>
+
+            <div className="plan-workbench">
+              <div className="plan-controls">
+                <div className="workbench-title"><div><p className="eyebrow">LIVE PLAN BUILDER</p><h3>{selectedPlan.name}</h3></div><button onClick={resetToRecommendedPlan}><RefreshCw size={13} /> Reset best fit</button></div>
+                <p className="plan-assumption">{selectedPlan.assumption}</p>
+
+                <label className="plan-slider"><span><b>Interest rate</b><output>{selectedPlan.annualRate.toFixed(1)}%</output></span><input aria-label="Plan interest rate" type="range" min={Math.max(0, borrower.interest_rate - 3)} max={Math.min(40, borrower.interest_rate + 2)} step="0.1" value={selectedPlan.annualRate} onChange={(event) => updatePlanTerms({ annualRate: Number(event.target.value) })} /><small>Lender pricing decision; lower rates are not guaranteed.</small></label>
+                <label className="plan-slider"><span><b>Total revised tenure</b><output>{selectedPlan.totalTenureMonths} months</output></span><input aria-label="Plan total tenure" type="range" min={Math.min(borrower.remaining_tenure_months, 120)} max="120" step="1" value={selectedPlan.totalTenureMonths} onChange={(event) => updatePlanTerms({ totalTenureMonths: Number(event.target.value) })} /><small>Longer tenure reduces EMI but normally raises total interest.</small></label>
+                <label className="plan-select"><span><b>Payment moratorium</b><small>Interest is capitalised during the pause.</small></span><select aria-label="Plan moratorium" value={selectedPlan.moratoriumMonths} onChange={(event) => updatePlanTerms({ moratoriumMonths: Number(event.target.value) })}><option value="0">No pause</option><option value="3">3 months</option><option value="6">6 months</option></select></label>
+              </div>
+
+              <div className="plan-outcome" aria-live="polite">
+                <div className="outcome-head"><div><p className="eyebrow">SELECTED PLAN OUTCOME</p><h3>{money(selectedPlan.emi)} <span>/ month</span></h3></div><span className={`feasibility ${selectedPlan.feasibility.toLowerCase().replace(" ", "-")}`}>{selectedPlan.feasibility}</span></div>
+                <div className="outcome-grid">
+                  <div><span>Monthly relief</span><b className={selectedPlan.monthlyRelief >= 0 ? "good" : "bad"}>{selectedPlan.monthlyRelief >= 0 ? money(selectedPlan.monthlyRelief) : `+${money(Math.abs(selectedPlan.monthlyRelief))}`}</b><small>vs current {money(borrower.current_emi)}</small></div>
+                  <div><span>Projected DSCR</span><b className={selectedPlan.projectedDscr >= 1.2 ? "good" : "bad"}>{selectedPlan.projectedDscr.toFixed(2)}x</b><small>1.20x planning target</small></div>
+                  <div><span>Estimated total interest</span><b>{money(selectedPlan.totalInterest)}</b><small>over revised schedule</small></div>
+                  <div><span>Change in remaining cash outflow</span><b className={selectedPlan.changeVsCurrentSchedule <= 0 ? "good" : "cost"}>{selectedPlan.changeVsCurrentSchedule >= 0 ? "+" : "−"}{money(Math.abs(selectedPlan.changeVsCurrentSchedule))}</b><small>vs current EMI × tenure</small></div>
+                </div>
+                <div className="model-whatif">
+                  <div className="model-whatif-icon"><SlidersHorizontal size={17} /></div>
+                  <div><span>MODEL WHAT-IF • EMI CHANGED, OTHER INPUTS HELD CONSTANT</span><p><b>{percent(result.probability)}</b><ArrowRight size={14} /><strong>{percent(projectedResult.probability)}</strong></p><small>{modelProbabilityImprovement > 0 ? `${percentagePoints(modelProbabilityImprovement)} lower projected stress probability` : "No modelled probability improvement from these terms"}. This is a scenario simulation, not a promised outcome.</small></div>
+                </div>
+                {selectedPlan.feasibility === "Not feasible" && <div className="not-feasible-note"><AlertTriangle size={15} /><span><b>EMI-only restructuring is insufficient.</b> The proposed EMI still exceeds current free cash flow. The lender should assess business viability, working-capital support and deeper corrective action.</span></div>}
+              </div>
+            </div>
+
+            <div className="restructure-timeline">
+              <div className="timeline-title"><CalendarClock size={18} /><div><b>Action timeline</b><span>What to do before and after the lender conversation</span></div></div>
+              <div className="timeline-steps">{restructuringTiming.steps.map((step, index) => <div key={`${step.when}-${step.title}`}><i>{index + 1}</i><span>{step.when}</span><b>{step.title}</b><p>{step.detail}</p></div>)}</div>
+            </div>
+            <div className="lender-approval-note"><Landmark size={16} /><span><b>Do not change payments on your own.</b> These are cash-flow scenarios, not sanctioned terms. Continue the contractual EMI until the lender issues a written revised schedule; restructuring can affect classification, pricing and credit history.</span></div>
           </section>
 
           <section className="drivers-section section-anchor" id="drivers">
@@ -485,7 +618,7 @@ export default function Home() {
       <button className={`chat-launcher ${chatOpen ? "open" : ""}`} onClick={() => setChatOpen(!chatOpen)} aria-label={chatOpen ? "Close Savings Coach" : "Open Savings Coach"} aria-expanded={chatOpen} aria-controls="savings-coach"><MessageCircle size={18} /><span>Savings Coach</span></button>
       {chatOpen && <aside className="coach-panel" id="savings-coach" aria-label="Savings Coach">
         <div className="coach-head"><div className="coach-avatar"><PiggyBank size={19} /></div><div><b>Savings Coach</b><span>Borrower-aware guidance</span></div><button onClick={() => setChatOpen(false)} aria-label="Close Savings Coach"><X size={17} /></button></div>
-        <div className="coach-context"><span className={categoryClass}>{result.category} risk</span><b>{percent(result.probability)}</b><small>Current analyzed borrower</small></div>
+        <div className="coach-context"><span className={categoryClass}>{result.category} risk</span><b>{percent(result.probability)}</b><small>Selected: {selectedPlan.name}</small></div>
         <div className="coach-messages" role="log" aria-live="polite" ref={chatLogRef}>
           {chatMessages.map((message) => <div className={`coach-message ${message.role}`} key={message.id}>{message.text}</div>)}
         </div>
