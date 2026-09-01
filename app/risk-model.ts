@@ -1,5 +1,79 @@
 import artifact from "./risk-model-artifact.json";
 
+export type ModelName = "Logistic Regression" | "CatBoost" | "XGBoost";
+
+export type ModelMetrics = {
+  ROC_AUC: number;
+  PR_AUC: number;
+  Precision: number;
+  Recall: number;
+  F1: number;
+  Brier_Score: number;
+};
+
+type CalibrationExport = {
+  method: "none" | "sigmoid" | "isotonic";
+  coefficient?: number;
+  intercept?: number;
+  x_thresholds?: number[];
+  y_thresholds?: number[];
+};
+
+type XGBoostNode = {
+  nodeid: number;
+  split?: string;
+  split_condition?: number;
+  yes?: number;
+  no?: number;
+  missing?: number;
+  leaf?: number;
+  children?: XGBoostNode[];
+};
+
+type EstimatorExport =
+  | { kind: "logistic"; coefficients: number[]; intercept: number }
+  | { kind: "xgboost"; base_margin: number; trees: XGBoostNode[] }
+  | { kind: "catboost"; scale: number; bias: number; trees: Array<{ splits: Array<{ feature_index: number; border: number }>; leaf_values: number[] }> };
+
+type ModelExport = {
+  name: ModelName;
+  threshold: number;
+  calibration: CalibrationExport;
+  test_metrics: ModelMetrics;
+  estimator: EstimatorExport;
+};
+
+type WebArtifact = {
+  schema_version: number;
+  default_model: ModelName;
+  dataset_rows: number;
+  test_rows: number;
+  dataset_prevalence: number;
+  preprocessor: {
+    feature_names: string[];
+    numeric_features: string[];
+    numeric_imputer_statistics: number[];
+    missing_indicator_indices: number[];
+    numeric_scaler_mean: number[];
+    numeric_scaler_scale: number[];
+    categorical_features: string[];
+    categorical_categories: string[][];
+  };
+  models: ModelExport[];
+  model_benchmark: Array<ModelMetrics & {
+    Model: ModelName;
+    Threshold: number;
+    Calibration: string;
+    CV_ROC_AUC: number;
+    CV_PR_AUC: number;
+    CV_Recall: number;
+    CV_F1: number;
+  }>;
+  notice: string;
+};
+
+const webArtifact = artifact as unknown as WebArtifact;
+
 export type BorrowerInput = {
   industry: string;
   state: string;
@@ -38,6 +112,9 @@ export type Driver = {
 };
 
 export type RiskResult = {
+  modelName: ModelName;
+  calibrationMethod: CalibrationExport["method"];
+  driverMethod: "log-odds contribution" | "probability sensitivity";
   probability: number;
   score: number;
   category: "Low" | "Moderate" | "High" | "Critical";
@@ -50,10 +127,19 @@ export type RiskResult = {
   warnings: string[];
 };
 
-export const MODEL_METRICS = artifact.test_metrics;
-export const MODEL_NAME = artifact.model_name;
-export const PORTFOLIO_PREVALENCE = artifact.dataset_prevalence;
-export const MODEL_BENCHMARK = artifact.model_benchmark;
+export const MODEL_NAME = webArtifact.default_model;
+export const AVAILABLE_MODELS = webArtifact.models.map((model) => model.name);
+export const PORTFOLIO_PREVALENCE = webArtifact.dataset_prevalence;
+export const DATASET_ROWS = webArtifact.dataset_rows;
+export const TEST_ROWS = webArtifact.test_rows;
+export const MODEL_BENCHMARK = webArtifact.model_benchmark;
+export const MODEL_METRICS = webArtifact.models.find((model) => model.name === MODEL_NAME)!.test_metrics;
+
+export function getModelMetrics(modelName: ModelName): ModelMetrics {
+  const model = webArtifact.models.find((candidate) => candidate.name === modelName);
+  if (!model) throw new RangeError(`Unknown risk model: ${modelName}`);
+  return model.test_metrics;
+}
 
 export function validateBorrower(input: BorrowerInput): string[] {
   const issues: string[] = [];
@@ -194,52 +280,131 @@ export function buildFeatureRecord(input: BorrowerInput): FeatureRecord {
 }
 
 function transformForModel(features: FeatureRecord) {
+  const preprocessor = webArtifact.preprocessor;
   const numericMissing: boolean[] = [];
-  const numeric = artifact.numeric_features.map((name, index) => {
+  const numeric = preprocessor.numeric_features.map((name, index) => {
     const value = features[name];
     const missing = typeof value !== "number" || !Number.isFinite(value);
     numericMissing.push(missing);
-    const imputed = missing ? artifact.numeric_imputer_statistics[index] : value;
-    return (imputed - artifact.numeric_scaler_mean[index]) / (artifact.numeric_scaler_scale[index] || 1);
+    const imputed = missing ? preprocessor.numeric_imputer_statistics[index] : value;
+    return (imputed - preprocessor.numeric_scaler_mean[index]) / (preprocessor.numeric_scaler_scale[index] || 1);
   });
 
-  artifact.missing_indicator_indices.forEach((featureIndex, indicatorIndex) => {
+  preprocessor.missing_indicator_indices.forEach((featureIndex, indicatorIndex) => {
     const raw = numericMissing[featureIndex] ? 1 : 0;
-    const scalerIndex = artifact.numeric_features.length + indicatorIndex;
-    numeric.push((raw - artifact.numeric_scaler_mean[scalerIndex]) / (artifact.numeric_scaler_scale[scalerIndex] || 1));
+    const scalerIndex = preprocessor.numeric_features.length + indicatorIndex;
+    numeric.push((raw - preprocessor.numeric_scaler_mean[scalerIndex]) / (preprocessor.numeric_scaler_scale[scalerIndex] || 1));
   });
 
   const categorical: number[] = [];
-  artifact.categorical_features.forEach((name, featureIndex) => {
+  preprocessor.categorical_features.forEach((name, featureIndex) => {
     const value = String(features[name] ?? "");
-    artifact.categorical_categories[featureIndex].forEach((category) => categorical.push(value === category ? 1 : 0));
+    preprocessor.categorical_categories[featureIndex].forEach((category) => categorical.push(value === category ? 1 : 0));
   });
   return [...numeric, ...categorical];
 }
 
-export function scoreBorrower(input: BorrowerInput): RiskResult {
+function evaluateXGBoostTree(node: XGBoostNode, transformed: number[]): number {
+  if (typeof node.leaf === "number") return node.leaf;
+  if (!node.split || typeof node.split_condition !== "number") throw new Error("Invalid XGBoost tree node");
+  const featureIndex = Number(node.split.replace(/^f/, ""));
+  // XGBoost's DMatrix stores inputs as float32. Reproduce that cast before
+  // applying learned split thresholds so browser and Python branches match.
+  const value = Math.fround(transformed[featureIndex]);
+  const nextId = !Number.isFinite(value)
+    ? node.missing
+    : value < node.split_condition ? node.yes : node.no;
+  const child = node.children?.find((candidate) => candidate.nodeid === nextId);
+  if (!child) throw new Error("XGBoost tree branch is missing");
+  return evaluateXGBoostTree(child, transformed);
+}
+
+function rawModelProbability(model: ModelExport, transformed: number[]): number {
+  const estimator = model.estimator;
+  if (estimator.kind === "logistic") {
+    if (transformed.length !== estimator.coefficients.length) throw new Error("Risk model feature contract is inconsistent");
+    const margin = transformed.reduce((total, value, index) => total + value * estimator.coefficients[index], estimator.intercept);
+    return sigmoid(margin);
+  }
+  if (estimator.kind === "xgboost") {
+    const margin = estimator.trees.reduce(
+      (total, tree) => total + evaluateXGBoostTree(tree, transformed),
+      estimator.base_margin,
+    );
+    return sigmoid(margin);
+  }
+  const treeTotal = estimator.trees.reduce((total, tree) => {
+    let leafIndex = 0;
+    tree.splits.forEach((split, depth) => {
+      if (transformed[split.feature_index] > split.border) leafIndex |= 1 << depth;
+    });
+    return total + tree.leaf_values[leafIndex];
+  }, 0);
+  return sigmoid(estimator.scale * treeTotal + estimator.bias);
+}
+
+function interpolateIsotonic(value: number, xs: number[], ys: number[]): number {
+  if (!xs.length || xs.length !== ys.length) return value;
+  if (value <= xs[0]) return ys[0];
+  if (value >= xs[xs.length - 1]) return ys[ys.length - 1];
+  let low = 0;
+  let high = xs.length - 1;
+  while (high - low > 1) {
+    const middle = Math.floor((low + high) / 2);
+    if (value < xs[middle]) high = middle;
+    else low = middle;
+  }
+  const distance = xs[high] - xs[low];
+  return distance <= 1e-12 ? ys[low] : ys[low] + (value - xs[low]) / distance * (ys[high] - ys[low]);
+}
+
+function calibrateProbability(rawProbability: number, calibration: CalibrationExport): number {
+  const clipped = Math.max(1e-6, Math.min(1 - 1e-6, rawProbability));
+  if (calibration.method === "sigmoid") {
+    const logit = Math.log(clipped / (1 - clipped));
+    return sigmoid((calibration.coefficient ?? 1) * logit + (calibration.intercept ?? 0));
+  }
+  if (calibration.method === "isotonic") {
+    return interpolateIsotonic(clipped, calibration.x_thresholds ?? [], calibration.y_thresholds ?? []);
+  }
+  return clipped;
+}
+
+function modelDrivers(model: ModelExport, transformed: number[], probability: number) {
+  const featureNames = webArtifact.preprocessor.feature_names;
+  if (model.estimator.kind === "logistic") {
+    return model.estimator.coefficients.map((coefficient, index) => ({
+      feature: humanize(featureNames[index]),
+      impact: coefficient * transformed[index],
+    })).filter((driver) => !driver.feature.startsWith("Missing "));
+  }
+  return transformed.map((value, index) => {
+    if (Math.abs(value) < 1e-12) return { feature: humanize(featureNames[index]), impact: 0 };
+    const withoutFeature = [...transformed];
+    withoutFeature[index] = 0;
+    const baselineProbability = calibrateProbability(rawModelProbability(model, withoutFeature), model.calibration);
+    return {
+      feature: humanize(featureNames[index]),
+      impact: probability - baselineProbability,
+    };
+  }).filter((driver) => !driver.feature.startsWith("Missing "));
+}
+
+export function scoreBorrower(input: BorrowerInput, modelName: ModelName = MODEL_NAME): RiskResult {
   const validationIssues = validateBorrower(input);
   if (validationIssues.length) throw new RangeError(validationIssues.join(" "));
+  const model = webArtifact.models.find((candidate) => candidate.name === modelName);
+  if (!model) throw new RangeError(`Unknown risk model: ${modelName}`);
   const features = buildFeatureRecord(input);
   const transformed = transformForModel(features);
-  if (transformed.length !== artifact.coefficients.length) {
-    throw new Error("Risk model feature contract is inconsistent");
-  }
-  const logit = transformed.reduce((total, value, index) => total + value * artifact.coefficients[index], artifact.intercept);
-  const rawProbability = sigmoid(logit);
-  const clippedRawProbability = Math.max(1e-6, Math.min(1 - 1e-6, rawProbability));
-  const calibratedProbability = artifact.calibration_method === "sigmoid"
-    ? sigmoid(artifact.calibration_coefficient * Math.log(clippedRawProbability / (1 - clippedRawProbability)) + artifact.calibration_intercept)
-    : rawProbability;
+  const rawProbability = rawModelProbability(model, transformed);
+  const calibratedProbability = calibrateProbability(rawProbability, model.calibration);
   const probability = Math.max(0, Math.min(1, calibratedProbability));
   const score = Math.round(probability * 1000) / 10;
   const category = score <= 30 ? "Low" : score <= 60 ? "Moderate" : score <= 80 ? "High" : "Critical";
-  const threshold = artifact.threshold;
+  const threshold = model.threshold;
 
-  const contributions = artifact.coefficients.map((coefficient, index) => ({
-    feature: humanize(artifact.feature_names[index]),
-    impact: coefficient * transformed[index],
-  })).filter((driver) => !driver.feature.startsWith("Missing "));
+  const contributions = modelDrivers(model, transformed, probability);
   const risk = contributions.filter((driver) => driver.impact > 0).sort((a, b) => b.impact - a.impact).slice(0, 5).map((driver) => ({ ...driver, direction: "risk" as const }));
   const protective = contributions.filter((driver) => driver.impact < 0).sort((a, b) => a.impact - b.impact).slice(0, 3).map((driver) => ({ ...driver, direction: "protective" as const }));
 
@@ -256,6 +421,9 @@ export function scoreBorrower(input: BorrowerInput): RiskResult {
   if (Number(features.cashflow_volatility_index) > 0.35) warnings.push("Cash-flow volatility is materially elevated");
 
   return {
+    modelName,
+    calibrationMethod: model.calibration.method,
+    driverMethod: model.estimator.kind === "logistic" ? "log-odds contribution" : "probability sensitivity",
     probability,
     score,
     category,

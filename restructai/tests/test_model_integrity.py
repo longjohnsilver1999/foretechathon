@@ -98,57 +98,84 @@ CRITICAL = {
 }
 
 
-def _score_web_export(advisor: dict[str, object]) -> float:
+def _score_web_export(advisor: dict[str, object], model_name: str) -> float:
     exported = json.loads(WEB_ARTIFACT_PATH.read_text(encoding="utf-8"))
+    preprocessor = exported["preprocessor"]
+    model = next(item for item in exported["models"] if item["name"] == model_name)
     row = engineer_features(pd.DataFrame([build_model_record(advisor)])).iloc[0]
 
     missing: list[bool] = []
     numeric: list[float] = []
-    for index, name in enumerate(exported["numeric_features"]):
+    for index, name in enumerate(preprocessor["numeric_features"]):
         value = row[name]
         is_missing = bool(pd.isna(value))
         missing.append(is_missing)
-        imputed = exported["numeric_imputer_statistics"][index] if is_missing else float(value)
+        imputed = preprocessor["numeric_imputer_statistics"][index] if is_missing else float(value)
         numeric.append(
-            (imputed - exported["numeric_scaler_mean"][index])
-            / (exported["numeric_scaler_scale"][index] or 1)
+            (imputed - preprocessor["numeric_scaler_mean"][index])
+            / (preprocessor["numeric_scaler_scale"][index] or 1)
         )
 
-    for indicator_index, feature_index in enumerate(exported["missing_indicator_indices"]):
-        scaler_index = len(exported["numeric_features"]) + indicator_index
+    for indicator_index, feature_index in enumerate(preprocessor["missing_indicator_indices"]):
+        scaler_index = len(preprocessor["numeric_features"]) + indicator_index
         raw = 1.0 if missing[feature_index] else 0.0
         numeric.append(
-            (raw - exported["numeric_scaler_mean"][scaler_index])
-            / (exported["numeric_scaler_scale"][scaler_index] or 1)
+            (raw - preprocessor["numeric_scaler_mean"][scaler_index])
+            / (preprocessor["numeric_scaler_scale"][scaler_index] or 1)
         )
 
     categorical: list[float] = []
-    for feature_index, name in enumerate(exported["categorical_features"]):
+    for feature_index, name in enumerate(preprocessor["categorical_features"]):
         value = str(row[name])
         categorical.extend(
             1.0 if value == category else 0.0
-            for category in exported["categorical_categories"][feature_index]
+            for category in preprocessor["categorical_categories"][feature_index]
         )
 
     transformed = np.asarray(numeric + categorical)
-    coefficients = np.asarray(exported["coefficients"])
-    assert len(transformed) == len(coefficients) == len(exported["feature_names"])
-    logit = float(exported["intercept"] + transformed @ coefficients)
-    raw_probability = 1 / (1 + np.exp(-np.clip(logit, -30, 30)))
-    if exported["calibration_method"] == "sigmoid":
+    estimator = model["estimator"]
+    assert len(transformed) == len(preprocessor["feature_names"])
+    if estimator["kind"] == "logistic":
+        logit = float(estimator["intercept"] + transformed @ np.asarray(estimator["coefficients"]))
+    elif estimator["kind"] == "xgboost":
+        def evaluate(node: dict[str, object]) -> float:
+            if "leaf" in node:
+                return float(node["leaf"])
+            feature_index = int(str(node["split"]).removeprefix("f"))
+            value = np.float32(transformed[feature_index])
+            next_id = node["yes"] if value < float(node["split_condition"]) else node["no"]
+            child = next(child for child in node["children"] if child["nodeid"] == next_id)
+            return evaluate(child)
+
+        logit = float(estimator["base_margin"] + sum(evaluate(tree) for tree in estimator["trees"]))
+    else:
+        tree_total = 0.0
+        for tree in estimator["trees"]:
+            leaf_index = 0
+            for depth, split in enumerate(tree["splits"]):
+                if transformed[split["feature_index"]] > split["border"]:
+                    leaf_index |= 1 << depth
+            tree_total += tree["leaf_values"][leaf_index]
+        logit = float(estimator["scale"] * tree_total + estimator["bias"])
+    raw_probability = float(1 / (1 + np.exp(-np.clip(logit, -30, 30))))
+    calibration = model["calibration"]
+    if calibration["method"] == "sigmoid":
         clipped = float(np.clip(raw_probability, 1e-6, 1 - 1e-6))
         calibrated_logit = (
-            exported["calibration_coefficient"] * np.log(clipped / (1 - clipped))
-            + exported["calibration_intercept"]
+            calibration["coefficient"] * np.log(clipped / (1 - clipped))
+            + calibration["intercept"]
         )
         return float(1 / (1 + np.exp(-np.clip(calibrated_logit, -30, 30))))
+    if calibration["method"] == "isotonic":
+        return float(np.interp(raw_probability, calibration["x_thresholds"], calibration["y_thresholds"]))
     return float(raw_probability)
 
 
+@pytest.mark.parametrize("model_name", ["Logistic Regression", "CatBoost", "XGBoost"])
 @pytest.mark.parametrize("advisor", [STABLE, STRESSED, CRITICAL])
-def test_browser_export_matches_persisted_pipeline(advisor: dict[str, object]) -> None:
-    python_probability = predict_advisor_risk(advisor, model_path=MODEL_PATH)["probability_of_stress"]
-    assert _score_web_export(advisor) == pytest.approx(python_probability, abs=1e-10)
+def test_browser_export_matches_persisted_pipeline(advisor: dict[str, object], model_name: str) -> None:
+    python_probability = predict_advisor_risk(advisor, model_path=MODEL_PATH, model_name=model_name)["probability_of_stress"]
+    assert _score_web_export(advisor, model_name) == pytest.approx(python_probability, abs=1e-6)
 
 
 def test_scenario_risk_ordering_and_buckets() -> None:
@@ -159,6 +186,17 @@ def test_scenario_risk_ordering_and_buckets() -> None:
     assert stable["risk_category"] == "Low"
     assert stressed["classification"] == 1
     assert critical["risk_category"] == "Critical"
+
+
+def test_all_three_models_are_selectable_and_score_independently() -> None:
+    names = ["Logistic Regression", "CatBoost", "XGBoost"]
+    results = {
+        name: predict_advisor_risk(STRESSED, model_path=MODEL_PATH, model_name=name)
+        for name in names
+    }
+    assert {result["model_name"] for result in results.values()} == set(names)
+    assert len({round(result["probability_of_stress"], 6) for result in results.values()}) == 3
+    assert all(0 <= result["probability_of_stress"] <= 1 for result in results.values())
 
 
 def test_cash_flow_fit_emi_what_if_reduces_modelled_stress() -> None:
@@ -196,11 +234,13 @@ def test_saved_metrics_reproduce_on_untouched_test_partition() -> None:
         stratify=data["default_90d"].astype(int),
         random_state=42,
     )
-    raw = artifact["pipeline"].predict_proba(x_test)[:, 1]
-    calibrated = artifact["calibrator"].predict(raw)
-    reproduced = classification_metrics(y_test.to_numpy(), calibrated, float(artifact["threshold"]))
-    for metric, expected in artifact["test_metrics"].items():
-        assert reproduced[metric] == pytest.approx(expected, abs=1e-12)
+    assert set(artifact["models"]) == {"Logistic Regression", "CatBoost", "XGBoost"}
+    for model_name, model in artifact["models"].items():
+        raw = model["pipeline"].predict_proba(x_test)[:, 1]
+        calibrated = model["calibrator"].predict(raw)
+        reproduced = classification_metrics(y_test.to_numpy(), calibrated, float(model["threshold"]))
+        for metric, expected in model["test_metrics"].items():
+            assert reproduced[metric] == pytest.approx(expected, abs=1e-12), model_name
 
 
 def test_benchmark_models_have_distinct_full_precision_results() -> None:

@@ -1,6 +1,6 @@
 # RestructAI
 
-RestructAI is an explainable 90-day financial-stress prediction system for Indian MSMEs. The project combines a calibrated Python credit-risk pipeline with an interactive web demonstration that runs the exported fitted model directly in the browser.
+RestructAI is an explainable 90-day financial-stress prediction system for Indian MSMEs. The project combines a calibrated Python credit-risk pipeline with an interactive web application that runs all three exported fitted models directly in the browser.
 
 ## What is included
 
@@ -8,10 +8,10 @@ RestructAI is an explainable 90-day financial-stress prediction system for India
 - Leakage-safe feature engineering and train/validation/test splitting.
 - A formal five-fold benchmark of Logistic Regression, XGBoost and CatBoost only.
 - Probability calibration, threshold optimization, SHAP/coefficient explanations and early-warning rules.
-- Persisted single-borrower inference through `predict_msme_risk(data)`.
+- Persisted, model-selectable single-borrower inference through `predict_msme_risk(data, model_name=...)`.
 - An interactive risk dashboard with editable borrower inputs, scenario presets and downloadable analysis.
 - A cash-flow-based EMI restructuring studio that compares tenure extension, rate-plus-tenure and short-bridge scenarios, including monthly relief, DSCR, lifetime cost and a live model what-if.
-- A borrower-aware Savings Coach that explains when to approach the lender and how the selected plan changes the repayment discussion.
+- A borrower-aware Savings Coach whose prior answers recompute whenever the analyzed borrower, model or selected plan changes.
 
 The modelling project, methodology, limitations and commands are documented in [restructai/README.md](restructai/README.md).
 

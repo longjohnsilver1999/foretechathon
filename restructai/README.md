@@ -1,8 +1,8 @@
 # RestructAI — 90-Day MSME Financial-Stress Engine
 
-RestructAI is a production-style, hackathon-friendly credit-risk project for Indian MSMEs. It predicts the probability that a borrower will experience serious repayment stress or default within the next 90 days. It is a decision-support system, not an automatic loan approval or rejection system.
+RestructAI is an operational, hackathon-friendly credit-risk application for Indian MSMEs. It predicts the probability that a borrower will experience serious repayment stress or default within the next 90 days. It is a decision-support system, not an automatic loan approval or rejection system.
 
-This phase deliberately stops before EMI restructuring optimization. Its output is a calibrated probability, risk score, early-warning assessment and explanation that a later cash-flow and EMI scenario engine can consume.
+The fitted Logistic Regression, XGBoost and CatBoost pipelines are all persisted and selectable. Their calibrated probabilities feed the working cash-flow and EMI restructuring studio, model what-if simulation, early-warning assessment and borrower-aware Savings Coach.
 
 ## Pipeline
 
@@ -139,14 +139,14 @@ python -m venv .venv
 .venv\Scripts\python -m pytest -q
 ```
 
-The complete run generates the dataset, trains the three models, evaluates calibration and thresholds, writes report charts, persists the selected pipeline and prints a sample inference.
+The complete run generates the dataset, trains the three models, evaluates each model's calibration and operating threshold, writes report charts, persists all three fitted pipelines and prints a sample inference.
 
 Single-borrower inference is available through:
 
 ```python
 from src.inference import predict_msme_risk
 
-risk_result = predict_msme_risk(borrower_data)
+risk_result = predict_msme_risk(borrower_data, model_name="CatBoost")
 ```
 
 The browser dashboard and Python API also share a validated 26-signal advisor contract:
@@ -154,12 +154,12 @@ The browser dashboard and Python API also share a validated 26-signal advisor co
 ```python
 from src.inference import predict_advisor_risk
 
-risk_result = predict_advisor_risk(advisor_input)
+risk_result = predict_advisor_risk(advisor_input, model_name="XGBoost")
 ```
 
-This adapter validates ranges and cross-field relationships, then deterministically expands the advisor inputs into the full raw record expected by the persisted pipeline. Regression tests compare the exported browser coefficients, preprocessing statistics and calibration parameters against Python inference for stable, stressed and critical borrowers.
+This adapter validates ranges and cross-field relationships, then deterministically expands the advisor inputs into the full raw record expected by the persisted pipeline. Regression tests compare the exported Logistic Regression coefficients and the exported XGBoost/CatBoost trees, preprocessing statistics and calibration parameters against Python inference for stable, stressed and critical borrowers.
 
-It returns a calibrated probability, 0–100 score, Low/Moderate/High/Critical category, operational classification, configurable threshold, model factors and warning flags. Bucket boundaries are prototype policy thresholds and must be calibrated using each lender's risk appetite and governed outcome data.
+It returns a calibrated probability, 0–100 score, Low/Moderate/High/Critical category, operational classification, configurable threshold, model factors and warning flags. Bucket boundaries are planning-policy thresholds and must be calibrated using each lender's risk appetite and governed outcome data.
 
 ## Limitations
 
@@ -167,18 +167,18 @@ It returns a calibrated probability, 0–100 score, Low/Moderate/High/Critical c
 
 Additional limitations include synthetic portfolio mix, simplified GST/bank-credit reconciliation, cross-sectional rather than account-level time-series modelling, and no fairness or macroeconomic stability validation. Production deployment would require governance, monitoring, drift detection, bias testing, adverse-action review and human credit oversight.
 
-## Next phase interface
+## Working decision flow
 
 ```text
-Cash-Flow Forecasting Engine
+Borrower Inputs + Cash-Flow Signals
         ↓
-Default Risk Model (`predict_msme_risk`)
+Selectable Risk Model (`predict_msme_risk`)
         ↓
 EMI Scenario Generator
         ↓
-Constrained Optimization Engine
+Cash-Flow-Fit Plan Builder
         ↓
-Monte Carlo Stress Testing
+Model What-If + Savings Coach
         ↓
 Recommended Restructuring Plan
 ```

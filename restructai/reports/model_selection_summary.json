@@ -13,6 +13,38 @@
     "F1": 0.7028862478777589,
     "Brier_Score": 0.05080111030941382
   },
+  "model_test_results": {
+    "Logistic Regression": {
+      "ROC_AUC": 0.9392090089004079,
+      "PR_AUC": 0.7670096777975566,
+      "Precision": 0.6742671009771987,
+      "Recall": 0.7340425531914894,
+      "F1": 0.7028862478777589,
+      "Brier_Score": 0.05080111030941382,
+      "Threshold": 0.36,
+      "Calibration": "sigmoid"
+    },
+    "XGBoost": {
+      "ROC_AUC": 0.935364889933632,
+      "PR_AUC": 0.7514996703047704,
+      "Precision": 0.5099778270509978,
+      "Recall": 0.8156028368794326,
+      "F1": 0.6275579809004093,
+      "Brier_Score": 0.05273763218531268,
+      "Threshold": 0.2,
+      "Calibration": "sigmoid"
+    },
+    "CatBoost": {
+      "ROC_AUC": 0.9386481291731126,
+      "PR_AUC": 0.7557287653678919,
+      "Precision": 0.515625,
+      "Recall": 0.8191489361702128,
+      "F1": 0.6328767123287671,
+      "Brier_Score": 0.052055787661612216,
+      "Threshold": 0.2,
+      "Calibration": "sigmoid"
+    }
+  },
   "top_global_features": [
     {
       "feature": "Emi To Revenue",

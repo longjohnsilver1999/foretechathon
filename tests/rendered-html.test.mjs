@@ -29,10 +29,14 @@ test("server-renders the RestructAI stress-risk advisor", async () => {
   assert.match(html, /MODEL WHAT-IF/);
   assert.match(html, /Do not change payments on your own\./);
   assert.match(html, /Savings Coach/);
-  assert.match(html, /Verified: the models are not returning the same figures\./);
+  assert.match(html, /Choose the model that scores this borrower/);
+  assert.match(html, /Logistic Regression/);
+  assert.match(html, /CatBoost/);
+  assert.match(html, /XGBoost/);
+  assert.match(html, /What ROC–AUC, PR–AUC and the other figures really mean/);
+  assert.match(html, /These are real out-of-sample results, and each row is selectable\./);
   assert.match(html, /0\.9392/);
   assert.match(html, /0\.9386/);
   assert.match(html, /0\.9354/);
-  assert.match(html, /Selected on evidence, not assumption/);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Starter Project/);
 });

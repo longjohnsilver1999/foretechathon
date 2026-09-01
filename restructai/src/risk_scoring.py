@@ -40,7 +40,7 @@ class ProbabilityCalibrator:
 
 
 def risk_category(score: float) -> str:
-    """Map a 0–100 prototype stress score to a policy bucket."""
+    """Map a 0–100 stress score to an application policy bucket."""
 
     if not 0 <= score <= 100:
         raise ValueError("Risk score must be between 0 and 100")

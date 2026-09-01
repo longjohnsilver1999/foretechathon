@@ -181,33 +181,60 @@ def train_and_evaluate(
 
     selected_name = max(validation_metrics, key=lambda name: _selection_score(validation_metrics[name]))
     selected_pipeline = fitted[selected_name]
-    calibrator, calibration_table = _choose_calibration(
-        validation_probabilities[selected_name], y_validation.to_numpy()
-    )
-    calibrated_validation = calibrator.predict(validation_probabilities[selected_name])
-    threshold, threshold_table = optimize_threshold(y_validation.to_numpy(), calibrated_validation)
+
+    # Every selectable model receives its own validation-only calibration and
+    # operating threshold. The untouched test split is then used exactly once
+    # to report the figures displayed by the web application.
+    calibrators: dict[str, ProbabilityCalibrator] = {}
+    calibration_tables: dict[str, pd.DataFrame] = {}
+    thresholds: dict[str, float] = {}
+    threshold_tables: dict[str, pd.DataFrame] = {}
+    for name, probability in validation_probabilities.items():
+        model_calibrator, model_calibration_table = _choose_calibration(
+            probability, y_validation.to_numpy()
+        )
+        calibrated_validation = model_calibrator.predict(probability)
+        model_threshold, model_threshold_table = optimize_threshold(
+            y_validation.to_numpy(), calibrated_validation
+        )
+        calibrators[name] = model_calibrator
+        calibration_tables[name] = model_calibration_table
+        thresholds[name] = model_threshold
+        threshold_tables[name] = model_threshold_table
 
     test_probabilities = {name: pipeline.predict_proba(x_test)[:, 1] for name, pipeline in fitted.items()}
-    raw_test_rows: list[dict[str, float | str]] = []
+    model_test_metrics: dict[str, dict[str, float]] = {}
+    test_rows: list[dict[str, float | str]] = []
     for name, probability in test_probabilities.items():
-        row: dict[str, float | str] = {"Model": name}
-        row.update(classification_metrics(y_test.to_numpy(), probability, 0.5))
+        calibrated_test_probability = calibrators[name].predict(probability)
+        metrics = classification_metrics(
+            y_test.to_numpy(), calibrated_test_probability, thresholds[name]
+        )
+        model_test_metrics[name] = metrics
+        row: dict[str, float | str] = {
+            "Model": name,
+            **metrics,
+            "Threshold": thresholds[name],
+            "Calibration": calibrators[name].method,
+        }
         row.update({f"CV_{metric}": value for metric, value in cv_metrics[name].items()})
-        raw_test_rows.append(row)
-    comparison = pd.DataFrame(raw_test_rows).sort_values("PR_AUC", ascending=False)
+        test_rows.append(row)
+    comparison = pd.DataFrame(test_rows).sort_values("PR_AUC", ascending=False)
     comparison.to_csv(reports / "model_comparison.csv", index=False)
 
+    calibrator = calibrators[selected_name]
+    threshold = thresholds[selected_name]
     calibrated_test = calibrator.predict(test_probabilities[selected_name])
-    final_metrics = classification_metrics(y_test.to_numpy(), calibrated_test, threshold)
-    threshold_table.to_csv(reports / "threshold_analysis.csv", index=False)
-    calibration_table.to_csv(reports / "calibration_comparison.csv", index=False)
+    final_metrics = model_test_metrics[selected_name]
+    threshold_tables[selected_name].to_csv(reports / "threshold_analysis.csv", index=False)
+    calibration_tables[selected_name].to_csv(reports / "calibration_comparison.csv", index=False)
     generate_model_figures(
         y_test.to_numpy(),
         test_probabilities,
         selected_name,
         calibrated_test,
         threshold,
-        threshold_table,
+        threshold_tables[selected_name],
         figures,
     )
 
@@ -237,7 +264,20 @@ def train_and_evaluate(
         "test_metrics": final_metrics,
         "calibration_method": calibrator.method,
         "dataset_prevalence": float(data["default_90d"].mean()),
+        "dataset_rows": int(len(data)),
+        "test_rows": int(len(x_test)),
         "random_state": RANDOM_STATE,
+        "models": {
+            name: {
+                "pipeline": fitted[name],
+                "calibrator": calibrators[name],
+                "threshold": thresholds[name],
+                "calibration_method": calibrators[name].method,
+                "validation_metrics": validation_metrics[name],
+                "test_metrics": model_test_metrics[name],
+            }
+            for name in fitted
+        },
     }
     joblib.dump(artifact, models_dir / "risk_model.joblib")
 
@@ -249,6 +289,14 @@ def train_and_evaluate(
         "dataset_rows": len(data),
         "dataset_prevalence": float(data["default_90d"].mean()),
         "test_metrics": final_metrics,
+        "model_test_results": {
+            name: {
+                **model_test_metrics[name],
+                "Threshold": thresholds[name],
+                "Calibration": calibrators[name].method,
+            }
+            for name in fitted
+        },
         "top_global_features": importance.head(8).to_dict(orient="records"),
     }
     (reports / "model_selection_summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -270,4 +318,3 @@ def print_evaluation_report(artifact: dict[str, Any], comparison_path: str | Pat
     print(f"Reason for selection: {artifact['selection_reason']}")
     print(f"Optimal operational threshold: {artifact['threshold']:.2f}")
     print("=" * 49)
-

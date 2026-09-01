@@ -35,11 +35,15 @@ import {
 } from "lucide-react";
 
 import {
+  AVAILABLE_MODELS,
+  DATASET_ROWS,
+  TEST_ROWS,
   type BorrowerInput,
+  type ModelName,
   MODEL_BENCHMARK,
-  MODEL_METRICS,
   MODEL_NAME,
   PORTFOLIO_PREVALENCE,
+  getModelMetrics,
   scoreBorrower,
   validateBorrower,
 } from "./risk-model";
@@ -53,7 +57,7 @@ import {
 } from "./restructuring";
 
 type InputTab = "financial" | "debt" | "conduct" | "business";
-type ChatMessage = { id: number; role: "assistant" | "user"; text: string };
+type ChatMessage = { id: number; role: "assistant" | "user"; text: string; sourcePrompt?: string };
 
 const QUICK_PROMPTS = [
   "Compare restructuring plans",
@@ -61,9 +65,6 @@ const QUICK_PROMPTS = [
   "How much EMI relief?",
   "Why this risk score?",
 ];
-
-const LOGISTIC_BENCHMARK = MODEL_BENCHMARK.find((model) => model.Model === "Logistic Regression");
-const CATBOOST_BENCHMARK = MODEL_BENCHMARK.find((model) => model.Model === "CatBoost");
 
 const stressedBorrower: BorrowerInput = {
   industry: "Textile",
@@ -153,6 +154,7 @@ export default function Home() {
   const [toast, setToast] = useState("");
   const [chatOpen, setChatOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
+  const [selectedModel, setSelectedModel] = useState<ModelName>(MODEL_NAME);
   const [selectedPlanId, setSelectedPlanId] = useState("cash-flow-fit");
   const [planOverrides, setPlanOverrides] = useState<PlanTerms | null>(null);
   const nextMessageId = useRef(2);
@@ -160,7 +162,8 @@ export default function Home() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { id: 1, role: "assistant", text: "Hi, I’m your Savings Coach. I use the current borrower score and cash-flow plan to suggest practical next steps. Ask me for an action plan, EMI relief, or ways to improve runway." },
   ]);
-  const result = useMemo(() => scoreBorrower(borrower), [borrower]);
+  const result = useMemo(() => scoreBorrower(borrower, selectedModel), [borrower, selectedModel]);
+  const selectedMetrics = useMemo(() => getModelMetrics(selectedModel), [selectedModel]);
   const validationIssues = useMemo(() => validateBorrower(draft), [draft]);
   const planOptions = useMemo(() => generateRestructuringPlans(borrower), [borrower]);
   const recommendedPlan = useMemo(() => getRecommendedPlan(planOptions), [planOptions]);
@@ -179,8 +182,8 @@ export default function Home() {
     : selectedBasePlan,
   [borrower, planOverrides, selectedBasePlan]);
   const projectedResult = useMemo(
-    () => scoreBorrower({ ...borrower, current_emi: Math.max(selectedPlan.emi, 1) }),
-    [borrower, selectedPlan.emi],
+    () => scoreBorrower({ ...borrower, current_emi: Math.max(selectedPlan.emi, 1) }, selectedModel),
+    [borrower, selectedPlan.emi, selectedModel],
   );
   const restructuringTiming = useMemo(() => getRestructuringTiming(borrower, result), [borrower, result]);
   const restructuringNeeded = useMemo(() => shouldRestructure(borrower, result), [borrower, result]);
@@ -202,7 +205,7 @@ export default function Home() {
       `Stress score: ${result.score} / 100`,
       `Risk category: ${result.category}`,
       `Operational threshold: ${percent(result.threshold)}`,
-      `Selected model: ${MODEL_NAME} with sigmoid calibration`,
+      `Selected model: ${result.modelName} with ${result.calibrationMethod} calibration`,
       "",
       "Early-warning signals:",
       ...result.warnings.map((warning) => `- ${warning}`),
@@ -220,7 +223,7 @@ export default function Home() {
       `- Estimated total interest: ${money(selectedPlan.totalInterest)}`,
       `- Two-month operating reserve gap: ${money(savingsPlan.reserveGap)}`,
       "",
-      "Decision support only. Synthetic-data methodology demonstration; not validated for automatic credit decisions.",
+      "Operational decision support using synthetic model-development data; not validated for automatic credit decisions.",
     ];
     return `data:text/plain;charset=utf-8,${encodeURIComponent(lines.join("\n"))}`;
   }, [result, restructuringTiming.label, selectedPlan, savingsPlan.reserveGap]);
@@ -269,7 +272,7 @@ export default function Home() {
     setBorrower(draft);
     setSelectedPlanId(nextRecommended.id);
     setPlanOverrides(null);
-    setToast("90-day stress analysis updated.");
+    setToast(`${selectedModel} analysis updated. Savings Coach refreshed.`);
     window.setTimeout(() => setToast(""), 2200);
   };
 
@@ -287,6 +290,12 @@ export default function Home() {
   const choosePlan = (id: string) => {
     setSelectedPlanId(id);
     setPlanOverrides(null);
+  };
+
+  const chooseModel = (modelName: ModelName) => {
+    setSelectedModel(modelName);
+    setToast(`${modelName} selected. Score, plan simulation and Savings Coach refreshed.`);
+    window.setTimeout(() => setToast(""), 2400);
   };
 
   const updatePlanTerms = (changes: Partial<PlanTerms>) => {
@@ -309,7 +318,7 @@ export default function Home() {
     const caution = " Treat this as a lender-discussion aid, not a binding restructuring offer.";
     if (/logistic|catboost|xgboost|model/.test(normalized)) {
       const figures = MODEL_BENCHMARK.map((model) => `${model.Model}: ROC–AUC ${model.ROC_AUC.toFixed(4)}, PR–AUC ${model.PR_AUC.toFixed(4)}`).join("; ");
-      return `The three models are producing different results. ${figures}. Logistic Regression was selected for borrower scoring because it had the strongest validation utility; the other two remain portfolio benchmarks.`;
+      return `${selectedModel} is currently scoring this borrower at ${percent(result.probability)}. All three engines are live and produce different fitted predictions. Held-out results: ${figures}. Switch models above the borrower form to compare them on the same inputs.`;
     }
     if (/when|timing|too late|now/.test(normalized)) {
       return `${restructuringTiming.label}. ${restructuringTiming.summary} Trigger: ${restructuringTiming.trigger}. Keep paying the contractual EMI until the lender approves revised terms in writing.${caution}`;
@@ -331,7 +340,7 @@ export default function Home() {
         : `Receivable days are already near the healthy planning level. Keep weekly ageing reviews and avoid broad discounts that reduce margin.`;
     }
     if (/why|risk|score|driver/.test(normalized)) {
-      return `This borrower is ${result.category.toLowerCase()} risk at ${percent(result.probability)}. The leading model pressures are ${leadingDrivers || "the combined financial signals"}; the rule layer also found ${result.warnings.length} early-warning signal${result.warnings.length === 1 ? "" : "s"}. Start with the drivers that can release cash fastest.`;
+      return `${selectedModel} now scores this borrower as ${result.category.toLowerCase()} risk at ${percent(result.probability)}. The leading model pressures are ${leadingDrivers || "the combined financial signals"}; the rule layer also found ${result.warnings.length} early-warning signal${result.warnings.length === 1 ? "" : "s"}. This answer always recomputes from the latest completed analysis.`;
     }
     const planLead = result.category === "Low"
       ? `Maintain the current EMI, preserve the ${result.cashRunway.toFixed(1)}-month runway and review the score monthly.`
@@ -347,7 +356,7 @@ export default function Home() {
     setChatMessages((current) => [
       ...current,
       { id: userId, role: "user", text: question },
-      { id: assistantId, role: "assistant", text: coachResponse(question) },
+      { id: assistantId, role: "assistant", text: "", sourcePrompt: question },
     ]);
     setChatInput("");
     setChatOpen(true);
@@ -378,7 +387,7 @@ export default function Home() {
           <div className="risk-wordmark"><PiggyBank size={17} /> RESTRUCT<span>AI</span></div>
           <div className="top-actions">
             <span className="secure"><PiggyBank size={13} /> Savings mode active</span>
-            <span className="model-chip"><FlaskConical size={13} /> Synthetic data • v1.0</span>
+            <span className="model-chip"><FlaskConical size={13} /> {selectedModel} • live</span>
           </div>
         </header>
 
@@ -402,6 +411,16 @@ export default function Home() {
             ))}
             {activePreset === "Custom" && <span className="custom-pill">Custom inputs</span>}
           </div>
+
+          <section className="model-selector" aria-labelledby="model-selector-title">
+            <div className="model-selector-copy"><span>LIVE PREDICTION ENGINE</span><b id="model-selector-title">Choose the model that scores this borrower</b><small>The risk score, what-if simulation, explanations and Savings Coach all update together.</small></div>
+            <div className="model-selector-options" role="radiogroup" aria-label="Prediction model">
+              {AVAILABLE_MODELS.map((modelName) => {
+                const metrics = getModelMetrics(modelName);
+                return <button key={modelName} type="button" role="radio" aria-checked={selectedModel === modelName} className={selectedModel === modelName ? "selected" : ""} onClick={() => chooseModel(modelName)}><span>{modelName}</span><small>Test ROC–AUC {metrics.ROC_AUC.toFixed(4)} • PR–AUC {metrics.PR_AUC.toFixed(4)}</small>{selectedModel === modelName && <CheckCircle2 size={15} />}</button>;
+              })}
+            </div>
+          </section>
 
           <section className="analysis-grid">
             <form className="borrower-card" onSubmit={(event) => { event.preventDefault(); runAnalysis(); }}>
@@ -459,7 +478,7 @@ export default function Home() {
             </form>
 
             <section className={`risk-result-card ${categoryClass}`} aria-live="polite">
-              <div className="result-topline"><span>MODEL RESULT</span><span className={`risk-pill ${categoryClass}`}>{result.category} risk</span></div>
+              <div className="result-topline"><span>{selectedModel.toUpperCase()} RESULT</span><span className={`risk-pill ${categoryClass}`}>{result.category} risk</span></div>
               <div className="score-layout">
                 <div className="score-ring" style={{ "--score-angle": scoreDegrees } as CSSProperties}>
                   <div><strong>{Math.round(result.score)}</strong><span>/100</span></div>
@@ -488,7 +507,7 @@ export default function Home() {
                 {result.warnings.length ? result.warnings.map((warning) => <p key={warning}><span>!</span>{warning}</p>) : <p className="all-clear"><Check size={13} /> No rule-assisted warnings detected.</p>}
               </div>
               <a className="download-button" href={downloadHref} download="restructai-risk-analysis.txt" onClick={confirmDownload}><Download size={15} /> Download risk analysis</a>
-              <small className="result-disclaimer">Calibrated probability • Synthetic-data methodology demo</small>
+              <small className="result-disclaimer">{result.calibrationMethod} calibrated probability • working fitted model • synthetic training data</small>
             </section>
           </section>
 
@@ -551,8 +570,8 @@ export default function Home() {
 
           <section className="drivers-section section-anchor" id="drivers">
             <div className="section-heading">
-              <div><p className="eyebrow">LOCAL EXPLAINABILITY</p><h2>What moved this borrower&apos;s score</h2><p>Signed standardized log-odds contributions from the selected model—not invented percentage impacts.</p></div>
-              <span className="explain-badge"><Sparkles size={13} /> Exact model contributions</span>
+              <div><p className="eyebrow">LOCAL EXPLAINABILITY</p><h2>What moved this borrower&apos;s score</h2><p>{result.driverMethod === "log-odds contribution" ? "Exact signed standardized log-odds contributions from Logistic Regression." : `One-feature-at-a-time probability sensitivity from the selected ${selectedModel} fitted model.`}</p></div>
+              <span className="explain-badge"><Sparkles size={13} /> {result.driverMethod}</span>
             </div>
             <div className="drivers-grid">
               <div className="driver-list">
@@ -560,7 +579,7 @@ export default function Home() {
                   <div className="driver-row" key={`${driver.feature}-${index}`}>
                     <span className={`driver-icon ${driver.direction}`}>{driver.direction === "risk" ? <TrendingUp size={13} /> : <TrendingDown size={13} />}</span>
                     <div><span><b>{driver.feature}</b><small>{driver.direction === "risk" ? "Increases risk" : "Reduces risk"}</small></span><div className="driver-track"><i className={driver.direction} style={{ width: `${Math.max(8, Math.abs(driver.impact) / maxDriverImpact * 100)}%` }}></i></div></div>
-                    <strong className={driver.direction}>{driver.impact > 0 ? "+" : ""}{driver.impact.toFixed(2)}</strong>
+                    <strong className={driver.direction}>{driver.impact > 0 ? "+" : ""}{result.driverMethod === "probability sensitivity" ? `${(driver.impact * 100).toFixed(1)}pp` : driver.impact.toFixed(2)}</strong>
                   </div>
                 ))}
               </div>
@@ -576,24 +595,35 @@ export default function Home() {
 
           <section className="model-evidence section-anchor" id="model-evidence">
             <div className="section-heading">
-              <div><p className="eyebrow">ACTUAL TEST RESULTS</p><h2>Selected on evidence, not assumption</h2><p>All metrics below were produced by the validated 12,000-borrower synthetic experiment.</p></div>
-              <span className="winner-chip"><CheckCircle2 size={14} /> {MODEL_NAME} selected</span>
+              <div><p className="eyebrow">ACTUAL HELD-OUT TEST RESULTS</p><h2>What ROC–AUC, PR–AUC and the other figures really mean</h2><p>These are computed on {TEST_ROWS.toLocaleString("en-IN")} borrowers that were never used to fit, calibrate or choose the alert threshold.</p></div>
+              <span className="winner-chip"><CheckCircle2 size={14} /> {selectedModel} active</span>
             </div>
             <div className="metric-cards">
-              <MetricCard label="ROC–AUC" value={MODEL_METRICS.ROC_AUC} note="Discrimination" />
-              <MetricCard label="PR–AUC" value={MODEL_METRICS.PR_AUC} note="Imbalanced performance" />
-              <MetricCard label="Stress recall" value={MODEL_METRICS.Recall} note="At 0.36 threshold" />
-              <MetricCard label="Brier score" value={MODEL_METRICS.Brier_Score} note="Lower is better" inverse />
+              <MetricCard label="ROC–AUC" value={selectedMetrics.ROC_AUC} note="Ranking across all thresholds" />
+              <MetricCard label="PR–AUC" value={selectedMetrics.PR_AUC} note={`Stress prevalence is ${percent(PORTFOLIO_PREVALENCE)}`} />
+              <MetricCard label="Precision" value={selectedMetrics.Precision} note="How many alerts were correct" />
+              <MetricCard label="Stress recall" value={selectedMetrics.Recall} note={`At ${percent(result.threshold)} threshold`} />
+              <MetricCard label="F1 score" value={selectedMetrics.F1} note="Precision–recall balance" />
+              <MetricCard label="Brier score" value={selectedMetrics.Brier_Score} note="Probability error; lower is better" inverse />
+            </div>
+
+            <div className="metric-guide">
+              <div><b>ROC–AUC</b><p>How often the model ranks a randomly selected stressed borrower above a non-stressed borrower. 0.5 is random; 1.0 is perfect.</p></div>
+              <div><b>PR–AUC</b><p>Precision and recall across alert thresholds. It is especially informative here because only {percent(PORTFOLIO_PREVALENCE)} of the test population is stressed; that prevalence is the no-skill baseline.</p></div>
+              <div><b>Precision</b><p>Of borrowers flagged at this model&apos;s threshold, the share that actually became stressed in the synthetic test set.</p></div>
+              <div><b>Recall</b><p>Of all borrowers that actually became stressed, the share caught by the model. Missing fewer stressed firms raises recall.</p></div>
+              <div><b>F1</b><p>A single balance between precision and recall. It falls when either too many alerts are wrong or too many stressed firms are missed.</p></div>
+              <div><b>Brier score</b><p>Mean squared error of predicted probabilities. Lower is better and reflects calibration as well as discrimination.</p></div>
             </div>
 
             <div className="benchmark-card">
-              <div className="benchmark-head"><span>Formal benchmark</span><span>Uncalibrated 0.50 classification threshold for consistent comparison</span></div>
+              <div className="benchmark-head"><span>Three live fitted models</span><span>Calibrated, model-specific validation threshold • untouched test split</span></div>
               <div className="benchmark-table" role="table" aria-label="Model benchmark metrics">
-                <div className="benchmark-row header" role="row"><span>Model</span><span>ROC–AUC</span><span>PR–AUC</span><span>Recall</span><span>F1</span><span>Brier</span></div>
-                {MODEL_BENCHMARK.map((model) => <div className={`benchmark-row ${model.Model === MODEL_NAME ? "winner" : ""}`} role="row" key={model.Model}><span>{model.Model}{model.Model === MODEL_NAME && <b>Selected</b>}</span><span>{model.ROC_AUC.toFixed(4)}</span><span>{model.PR_AUC.toFixed(4)}</span><span>{model.Recall.toFixed(4)}</span><span>{model.F1.toFixed(4)}</span><span>{model.Brier_Score.toFixed(4)}</span></div>)}
+                <div className="benchmark-row header" role="row"><span>Model</span><span>ROC–AUC</span><span>PR–AUC</span><span>Precision</span><span>Recall</span><span>F1</span><span>Brier</span><span>Threshold</span></div>
+                {MODEL_BENCHMARK.map((model) => <button type="button" className={`benchmark-row ${model.Model === selectedModel ? "winner" : ""}`} role="row" key={model.Model} onClick={() => chooseModel(model.Model)}><span>{model.Model}{model.Model === selectedModel && <b>Active</b>}</span><span>{model.ROC_AUC.toFixed(4)}</span><span>{model.PR_AUC.toFixed(4)}</span><span>{model.Precision.toFixed(4)}</span><span>{model.Recall.toFixed(4)}</span><span>{model.F1.toFixed(4)}</span><span>{model.Brier_Score.toFixed(4)}</span><span>{model.Threshold.toFixed(2)}</span></button>)}
               </div>
             </div>
-            <div className="model-clarity"><CheckCircle2 size={18} /><div><b>Verified: the models are not returning the same figures.</b><p>Logistic Regression and CatBoost looked identical only because ROC–AUC was rounded to three decimals. Their full values are {LOGISTIC_BENCHMARK?.ROC_AUC.toFixed(4)} and {CATBOOST_BENCHMARK?.ROC_AUC.toFixed(4)}. The live borrower score uses the selected {MODEL_NAME} pipeline only.</p></div></div>
+            <div className="model-clarity"><CheckCircle2 size={18} /><div><b>These are real out-of-sample results, and each row is selectable.</b><p>The experiment uses {DATASET_ROWS.toLocaleString("en-IN")} synthetic MSMEs: training and validation data fit and tune each model, while the final {TEST_ROWS.toLocaleString("en-IN")} records remain untouched until evaluation. Clicking a row changes the live borrower engine, not just the label.</p></div></div>
           </section>
 
           <section className="methodology-section section-anchor" id="methodology">
@@ -610,7 +640,7 @@ export default function Home() {
 
           <footer>
             <div className="footer-brand"><div className="brand-mark small"><PiggyBank size={16} /></div><span>RESTRUCTAI</span></div>
-            <p>Results use synthetic data to demonstrate methodology and are not validated real-world credit-risk performance.</p>
+            <p>This is a working decision-support application; its model performance uses synthetic data and is not validated real-world credit-risk performance.</p>
             <span>Explainable • Calibrated • Human-reviewed</span>
           </footer>
         </div>
@@ -618,9 +648,9 @@ export default function Home() {
       <button className={`chat-launcher ${chatOpen ? "open" : ""}`} onClick={() => setChatOpen(!chatOpen)} aria-label={chatOpen ? "Close Savings Coach" : "Open Savings Coach"} aria-expanded={chatOpen} aria-controls="savings-coach"><MessageCircle size={18} /><span>Savings Coach</span></button>
       {chatOpen && <aside className="coach-panel" id="savings-coach" aria-label="Savings Coach">
         <div className="coach-head"><div className="coach-avatar"><PiggyBank size={19} /></div><div><b>Savings Coach</b><span>Borrower-aware guidance</span></div><button onClick={() => setChatOpen(false)} aria-label="Close Savings Coach"><X size={17} /></button></div>
-        <div className="coach-context"><span className={categoryClass}>{result.category} risk</span><b>{percent(result.probability)}</b><small>Selected: {selectedPlan.name}</small></div>
+        <div className="coach-context"><span className={categoryClass}>{result.category} risk</span><b>{percent(result.probability)} • {selectedModel}</b><small>Live context: {selectedPlan.name}</small></div>
         <div className="coach-messages" role="log" aria-live="polite" ref={chatLogRef}>
-          {chatMessages.map((message) => <div className={`coach-message ${message.role}`} key={message.id}>{message.text}</div>)}
+          {chatMessages.map((message) => <div className={`coach-message ${message.role}`} key={message.id}>{message.sourcePrompt ? coachResponse(message.sourcePrompt) : message.id === 1 ? `Current analysis loaded: ${selectedModel} estimates ${percent(result.probability)} ${result.category.toLowerCase()} risk. I will recompute every answer when you change the model or run new borrower inputs.` : message.text}</div>)}
         </div>
         <div className="coach-prompts">{QUICK_PROMPTS.map((prompt) => <button key={prompt} onClick={() => sendChat(prompt)}>{prompt}</button>)}</div>
         <form className="coach-form" onSubmit={(event) => { event.preventDefault(); sendChat(chatInput); }}><input value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="Ask about EMI, cash or collections" aria-label="Message Savings Coach" /><button type="submit" aria-label="Send message" disabled={!chatInput.trim()}><Send size={16} /></button></form>

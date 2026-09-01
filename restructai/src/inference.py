@@ -29,6 +29,7 @@ def load_artifact(model_path: str | Path) -> dict[str, Any]:
 def predict_msme_risk(
     msme_data: Mapping[str, Any],
     model_path: str | Path | None = None,
+    model_name: str | None = None,
 ) -> dict[str, Any]:
     """Predict serious financial stress/default within 90 days for one borrower."""
 
@@ -58,31 +59,46 @@ def predict_msme_risk(
     if not pd.isna(frame.iloc[0]["monthly_revenue"]) and float(frame.iloc[0]["monthly_revenue"]) <= 0:
         raise ValueError("monthly_revenue must be greater than zero")
     engineered = engineer_features(frame)
-    probability_raw = artifact["pipeline"].predict_proba(engineered[MODEL_FEATURES])[:, 1]
-    probability = float(artifact["calibrator"].predict(probability_raw)[0])
+    selected_name = model_name or artifact["model_name"]
+    if "models" in artifact:
+        if selected_name not in artifact["models"]:
+            raise ValueError(f"Unknown model_name: {selected_name}")
+        selected = artifact["models"][selected_name]
+    elif selected_name == artifact["model_name"]:
+        selected = artifact
+    else:
+        raise ValueError(f"Unknown model_name: {selected_name}")
+    probability_raw = selected["pipeline"].predict_proba(engineered[MODEL_FEATURES])[:, 1]
+    probability = float(selected["calibrator"].predict(probability_raw)[0])
     probability = min(max(probability, 0.0), 1.0)
     score = round(probability * 100, 1)
-    threshold = float(artifact["threshold"])
-    explanation = explain_single_prediction(artifact, engineered[MODEL_FEATURES])
+    threshold = float(selected["threshold"])
+    explanation_artifact = {
+        **artifact,
+        "pipeline": selected["pipeline"],
+        "model_name": selected_name,
+    }
+    explanation = explain_single_prediction(explanation_artifact, engineered[MODEL_FEATURES])
     return {
         "probability_of_stress": probability,
         "risk_score": score,
         "risk_category": risk_category(score),
         "classification": int(probability >= threshold),
         "threshold": threshold,
-        "model_name": artifact["model_name"],
-        "calibration_method": artifact["calibration_method"],
+        "model_name": selected_name,
+        "calibration_method": selected["calibration_method"],
         "top_risk_factors": explanation["top_risk_factors"],
         "protective_factors": explanation["protective_factors"],
         "warning_flags": early_warning_flags(engineered.iloc[0]),
-        "decision_support_notice": "Prototype decision support only; not an automatic credit decision.",
+        "decision_support_notice": "Operational decision support using synthetic training data; not an automatic credit decision.",
     }
 
 
 def predict_advisor_risk(
     advisor_data: Mapping[str, Any],
     model_path: str | Path | None = None,
+    model_name: str | None = None,
 ) -> dict[str, Any]:
     """Validate and score the same 26-signal contract used by the browser advisor."""
 
-    return predict_msme_risk(build_model_record(advisor_data), model_path=model_path)
+    return predict_msme_risk(build_model_record(advisor_data), model_path=model_path, model_name=model_name)
