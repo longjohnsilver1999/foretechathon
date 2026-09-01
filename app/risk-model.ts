@@ -55,6 +55,71 @@ export const MODEL_NAME = artifact.model_name;
 export const PORTFOLIO_PREVALENCE = artifact.dataset_prevalence;
 export const MODEL_BENCHMARK = artifact.model_benchmark;
 
+export function validateBorrower(input: BorrowerInput): string[] {
+  const issues: string[] = [];
+  const requiredText: Array<[keyof BorrowerInput, string]> = [
+    ["industry", "Industry"],
+    ["state", "State"],
+    ["business_type", "Business type"],
+  ];
+  requiredText.forEach(([key, label]) => {
+    if (typeof input[key] !== "string" || !String(input[key]).trim()) issues.push(`${label} is required.`);
+  });
+
+  const range = (key: keyof BorrowerInput, label: string, minimum: number, maximum: number) => {
+    const value = input[key];
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      issues.push(`${label} is required.`);
+    } else if (value < minimum || value > maximum) {
+      issues.push(`${label} must be between ${minimum.toLocaleString("en-IN")} and ${maximum.toLocaleString("en-IN")}.`);
+    }
+  };
+
+  range("business_age_years", "Business age", 0.1, 100);
+  range("employee_count", "Employees", 1, 1_000_000);
+  range("monthly_revenue", "Monthly revenue", 1, 10_000_000_000);
+  range("monthly_operating_expenses", "Operating expenses", 1, 10_000_000_000);
+  range("free_cash_flow", "Free cash flow", -10_000_000_000, 10_000_000_000);
+  range("average_bank_balance", "Average bank balance", 0, 100_000_000_000);
+  range("revenue_growth_3m", "Three-month revenue growth", -1, 3);
+  range("cash_flow_volatility", "Cash-flow volatility", 0, 1);
+  range("receivable_days", "Receivable days", 0, 365);
+  range("receivable_days_change", "Change in receivable days", -365, 365);
+  range("overdue_receivables_ratio", "Overdue receivables", 0, 1);
+  range("outstanding_loan_amount", "Outstanding loan", 1, 1_000_000_000_000);
+  range("interest_rate", "Interest rate", 0, 40);
+  range("current_emi", "Current monthly EMI", 1, 10_000_000_000);
+  range("remaining_tenure_months", "Remaining tenure", 1, 360);
+  range("total_existing_debt", "Total existing debt", 1, 1_000_000_000_000);
+  range("number_of_active_loans", "Active loans", 1, 20);
+  range("delayed_emi_count_3m", "Delayed EMIs in three months", 0, 3);
+  range("delayed_emi_count_6m", "Delayed EMIs in six months", 0, 6);
+  range("missed_emi_count", "Missed EMIs", 0, 6);
+  range("average_payment_delay_days", "Average payment delay", 0, 365);
+  range("gst_turnover_growth", "GST turnover growth", -1, 3);
+  range("gst_vs_bank_credit_difference", "GST-to-bank variance", 0, 1);
+
+  const integerFields: Array<[keyof BorrowerInput, string]> = [
+    ["employee_count", "Employees"],
+    ["remaining_tenure_months", "Remaining tenure"],
+    ["number_of_active_loans", "Active loans"],
+    ["delayed_emi_count_3m", "Delayed EMIs in three months"],
+    ["delayed_emi_count_6m", "Delayed EMIs in six months"],
+    ["missed_emi_count", "Missed EMIs"],
+  ];
+  integerFields.forEach(([key, label]) => {
+    const value = input[key];
+    if (typeof value === "number" && Number.isFinite(value) && !Number.isInteger(value)) issues.push(`${label} must be a whole number.`);
+  });
+  if (Number.isFinite(input.total_existing_debt) && Number.isFinite(input.outstanding_loan_amount) && input.total_existing_debt < input.outstanding_loan_amount) {
+    issues.push("Total existing debt cannot be lower than the outstanding loan.");
+  }
+  if (Number.isFinite(input.delayed_emi_count_6m) && Number.isFinite(input.delayed_emi_count_3m) && input.delayed_emi_count_6m < input.delayed_emi_count_3m) {
+    issues.push("Six-month delayed EMIs cannot be lower than the three-month count.");
+  }
+  return issues;
+}
+
 const safeDivide = (numerator: number, denominator: number) =>
   Math.abs(denominator) > 1e-6 && Number.isFinite(numerator / denominator)
     ? numerator / denominator
@@ -153,6 +218,8 @@ function transformForModel(features: FeatureRecord) {
 }
 
 export function scoreBorrower(input: BorrowerInput): RiskResult {
+  const validationIssues = validateBorrower(input);
+  if (validationIssues.length) throw new RangeError(validationIssues.join(" "));
   const features = buildFeatureRecord(input);
   const transformed = transformForModel(features);
   if (transformed.length !== artifact.coefficients.length) {
@@ -160,8 +227,9 @@ export function scoreBorrower(input: BorrowerInput): RiskResult {
   }
   const logit = transformed.reduce((total, value, index) => total + value * artifact.coefficients[index], artifact.intercept);
   const rawProbability = sigmoid(logit);
+  const clippedRawProbability = Math.max(1e-6, Math.min(1 - 1e-6, rawProbability));
   const calibratedProbability = artifact.calibration_method === "sigmoid"
-    ? sigmoid(artifact.calibration_coefficient * Math.log(rawProbability / (1 - rawProbability)) + artifact.calibration_intercept)
+    ? sigmoid(artifact.calibration_coefficient * Math.log(clippedRawProbability / (1 - clippedRawProbability)) + artifact.calibration_intercept)
     : rawProbability;
   const probability = Math.max(0, Math.min(1, calibratedProbability));
   const score = Math.round(probability * 1000) / 10;

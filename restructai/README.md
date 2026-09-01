@@ -45,6 +45,7 @@ restructai/
 ├── notebooks/exploratory_analysis.ipynb
 ├── src/
 │   ├── data_generation.py
+│   ├── advisor_input.py
 │   ├── preprocessing.py
 │   ├── feature_engineering.py
 │   ├── train_models.py
@@ -148,6 +149,16 @@ from src.inference import predict_msme_risk
 risk_result = predict_msme_risk(borrower_data)
 ```
 
+The browser dashboard and Python API also share a validated 26-signal advisor contract:
+
+```python
+from src.inference import predict_advisor_risk
+
+risk_result = predict_advisor_risk(advisor_input)
+```
+
+This adapter validates ranges and cross-field relationships, then deterministically expands the advisor inputs into the full raw record expected by the persisted pipeline. Regression tests compare the exported browser coefficients, preprocessing statistics and calibration parameters against Python inference for stable, stressed and critical borrowers.
+
 It returns a calibrated probability, 0–100 score, Low/Moderate/High/Critical category, operational classification, configurable threshold, model factors and warning flags. Bucket boundaries are prototype policy thresholds and must be calibrated using each lender's risk appetite and governed outcome data.
 
 ## Limitations
@@ -171,4 +182,3 @@ Monte Carlo Stress Testing
         ↓
 Recommended Restructuring Plan
 ```
-

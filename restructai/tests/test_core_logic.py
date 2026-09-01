@@ -114,3 +114,7 @@ def test_persisted_prediction_output() -> None:
     assert isinstance(result["warning_flags"], list)
     assert isinstance(result["top_risk_factors"], list)
 
+
+def test_inference_rejects_negative_financial_values() -> None:
+    with pytest.raises(ValueError, match="monthly_revenue"):
+        predict_msme_risk(borrower(monthly_revenue=-1))

@@ -32,6 +32,7 @@ import {
   MODEL_NAME,
   PORTFOLIO_PREVALENCE,
   scoreBorrower,
+  validateBorrower,
 } from "./risk-model";
 
 type InputTab = "financial" | "debt" | "conduct" | "business";
@@ -76,6 +77,7 @@ const scenarioPresets: Record<string, Partial<BorrowerInput>> = {
     receivable_days: 36,
     receivable_days_change: -2,
     overdue_receivables_ratio: 0.08,
+    outstanding_loan_amount: 3_700_000,
     current_emi: 128_000,
     total_existing_debt: 4_400_000,
     number_of_active_loans: 1,
@@ -109,7 +111,6 @@ const scenarioPresets: Record<string, Partial<BorrowerInput>> = {
   },
 };
 
-const currency = (value: number) => `₹${Math.round(value).toLocaleString("en-IN")}`;
 const percent = (value: number) => `${(value * 100).toFixed(1)}%`;
 
 export default function Home() {
@@ -117,12 +118,41 @@ export default function Home() {
   const [borrower, setBorrower] = useState<BorrowerInput>(stressedBorrower);
   const [tab, setTab] = useState<InputTab>("financial");
   const [activePreset, setActivePreset] = useState("Stressed");
+  const [activeSection, setActiveSection] = useState("analysis");
   const [mobileNav, setMobileNav] = useState(false);
   const [toast, setToast] = useState("");
   const result = useMemo(() => scoreBorrower(borrower), [borrower]);
+  const validationIssues = useMemo(() => validateBorrower(draft), [draft]);
+  const downloadHref = useMemo(() => {
+    const lines = [
+      "RESTRUCTAI — MSME 90-DAY RISK ANALYSIS",
+      "",
+      `Predicted stress probability: ${percent(result.probability)}`,
+      `Stress score: ${result.score} / 100`,
+      `Risk category: ${result.category}`,
+      `Operational threshold: ${percent(result.threshold)}`,
+      `Selected model: ${MODEL_NAME} with sigmoid calibration`,
+      "",
+      "Early-warning signals:",
+      ...result.warnings.map((warning) => `- ${warning}`),
+      "",
+      "Main model drivers:",
+      ...result.drivers.slice(0, 5).map((driver) => `- ${driver.feature}: ${driver.impact > 0 ? "+" : ""}${driver.impact.toFixed(3)} log-odds contribution`),
+      "",
+      "Decision support only. Synthetic-data methodology demonstration; not validated for automatic credit decisions.",
+    ];
+    return `data:text/plain;charset=utf-8,${encodeURIComponent(lines.join("\n"))}`;
+  }, [result]);
 
   const updateNumber = (key: keyof BorrowerInput, value: string) => {
-    setDraft((current) => ({ ...current, [key]: Number(value) }));
+    const parsed = value.trim() === "" ? Number.NaN : Number(value);
+    setDraft((current) => ({ ...current, [key]: parsed }));
+    setActivePreset("Custom");
+  };
+
+  const updatePercent = (key: keyof BorrowerInput, value: string) => {
+    const parsed = value.trim() === "" ? Number.NaN : Number(value) / 100;
+    setDraft((current) => ({ ...current, [key]: parsed }));
     setActivePreset("Custom");
   };
 
@@ -141,42 +171,24 @@ export default function Home() {
   };
 
   const runAnalysis = () => {
+    if (validationIssues.length) {
+      setToast(validationIssues[0]);
+      window.setTimeout(() => setToast(""), 3200);
+      return;
+    }
     setBorrower(draft);
     setToast("90-day stress analysis updated.");
     window.setTimeout(() => setToast(""), 2200);
   };
 
-  const downloadAnalysis = () => {
-    const lines = [
-      "RESTRUCTAI — MSME 90-DAY RISK ANALYSIS",
-      "",
-      `Predicted stress probability: ${percent(result.probability)}`,
-      `Stress score: ${result.score} / 100`,
-      `Risk category: ${result.category}`,
-      `Operational threshold: ${percent(result.threshold)}`,
-      `Selected model: ${MODEL_NAME} with sigmoid calibration`,
-      "",
-      "Early-warning signals:",
-      ...result.warnings.map((warning) => `- ${warning}`),
-      "",
-      "Main model drivers:",
-      ...result.drivers.slice(0, 5).map((driver) => `- ${driver.feature}: ${driver.impact > 0 ? "+" : ""}${driver.impact.toFixed(3)} log-odds contribution`),
-      "",
-      "Decision support only. Synthetic-data methodology demonstration; not validated for automatic credit decisions.",
-    ];
-    const blob = new Blob([lines.join("\n")], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "restructai-risk-analysis.txt";
-    anchor.click();
-    URL.revokeObjectURL(url);
+  const confirmDownload = () => {
     setToast("Risk analysis downloaded.");
     window.setTimeout(() => setToast(""), 2200);
   };
 
   const scrollTo = (id: string) => {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    document.getElementById(id)?.scrollIntoView({ block: "start" });
+    setActiveSection(id);
     setMobileNav(false);
   };
 
@@ -186,20 +198,20 @@ export default function Home() {
 
   return (
     <main className="risk-app">
-      <aside className={`risk-sidebar ${mobileNav ? "mobile-open" : ""}`}>
+      <aside className={`risk-sidebar ${mobileNav ? "mobile-open" : ""}`} id="primary-sidebar">
         <button className="brand-mark" onClick={() => scrollTo("analysis")} aria-label="RestructAI home">R</button>
         <nav aria-label="Primary navigation">
-          <button className="nav-item active" onClick={() => scrollTo("analysis")} data-tooltip="Risk analysis" aria-label="Risk analysis"><LayoutDashboard size={19} /></button>
-          <button className="nav-item" onClick={() => scrollTo("drivers")} data-tooltip="Risk drivers" aria-label="Risk drivers"><Activity size={19} /></button>
-          <button className="nav-item" onClick={() => scrollTo("model-evidence")} data-tooltip="Model evidence" aria-label="Model evidence"><BarChart3 size={19} /></button>
-          <button className="nav-item" onClick={() => scrollTo("methodology")} data-tooltip="Methodology" aria-label="Methodology"><Database size={19} /></button>
+          <button className={`nav-item ${activeSection === "analysis" ? "active" : ""}`} onClick={() => scrollTo("analysis")} data-tooltip="Risk analysis" aria-label="Risk analysis" aria-current={activeSection === "analysis" ? "page" : undefined}><LayoutDashboard size={19} /></button>
+          <button className={`nav-item ${activeSection === "drivers" ? "active" : ""}`} onClick={() => scrollTo("drivers")} data-tooltip="Risk drivers" aria-label="Risk drivers" aria-current={activeSection === "drivers" ? "page" : undefined}><Activity size={19} /></button>
+          <button className={`nav-item ${activeSection === "model-evidence" ? "active" : ""}`} onClick={() => scrollTo("model-evidence")} data-tooltip="Model evidence" aria-label="Model evidence" aria-current={activeSection === "model-evidence" ? "page" : undefined}><BarChart3 size={19} /></button>
+          <button className={`nav-item ${activeSection === "methodology" ? "active" : ""}`} onClick={() => scrollTo("methodology")} data-tooltip="Methodology" aria-label="Methodology" aria-current={activeSection === "methodology" ? "page" : undefined}><Database size={19} /></button>
         </nav>
         <button className="avatar" aria-label="Analyst account">SK</button>
       </aside>
 
       <section className="risk-workspace">
         <header className="risk-topbar">
-          <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle navigation">{mobileNav ? <X size={20} /> : <Menu size={20} />}</button>
+          <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)} aria-label="Toggle navigation" aria-controls="primary-sidebar" aria-expanded={mobileNav}>{mobileNav ? <X size={20} /> : <Menu size={20} />}</button>
           <div className="risk-wordmark">RESTRUCT<span>AI</span></div>
           <div className="top-actions">
             <span className="secure"><LockKeyhole size={13} /> Local model demo</span>
@@ -235,49 +247,52 @@ export default function Home() {
                 <span><CheckCircle2 size={13} /> 26 signals</span>
               </div>
               <div className="input-tabs" role="tablist" aria-label="Input groups">
-                <button type="button" className={tab === "financial" ? "active" : ""} onClick={() => setTab("financial")} role="tab">Cash flow</button>
-                <button type="button" className={tab === "debt" ? "active" : ""} onClick={() => setTab("debt")} role="tab">Debt</button>
-                <button type="button" className={tab === "conduct" ? "active" : ""} onClick={() => setTab("conduct")} role="tab">Conduct</button>
-                <button type="button" className={tab === "business" ? "active" : ""} onClick={() => setTab("business")} role="tab">Business</button>
+                <button type="button" id="tab-financial" aria-controls="borrower-input-panel" aria-selected={tab === "financial"} className={tab === "financial" ? "active" : ""} onClick={() => setTab("financial")} role="tab">Cash flow</button>
+                <button type="button" id="tab-debt" aria-controls="borrower-input-panel" aria-selected={tab === "debt"} className={tab === "debt" ? "active" : ""} onClick={() => setTab("debt")} role="tab">Debt</button>
+                <button type="button" id="tab-conduct" aria-controls="borrower-input-panel" aria-selected={tab === "conduct"} className={tab === "conduct" ? "active" : ""} onClick={() => setTab("conduct")} role="tab">Conduct</button>
+                <button type="button" id="tab-business" aria-controls="borrower-input-panel" aria-selected={tab === "business"} className={tab === "business" ? "active" : ""} onClick={() => setTab("business")} role="tab">Business</button>
               </div>
 
-              <div className="risk-form-grid">
+              <div className="risk-form-grid" id="borrower-input-panel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
                 {tab === "financial" && <>
-                  <NumberField label="Monthly revenue" value={draft.monthly_revenue} prefix="₹" onChange={(value) => updateNumber("monthly_revenue", value)} />
-                  <NumberField label="Operating expenses" value={draft.monthly_operating_expenses} prefix="₹" onChange={(value) => updateNumber("monthly_operating_expenses", value)} />
-                  <NumberField label="Free cash flow" value={draft.free_cash_flow} prefix="₹" onChange={(value) => updateNumber("free_cash_flow", value)} />
-                  <NumberField label="Average bank balance" value={draft.average_bank_balance} prefix="₹" onChange={(value) => updateNumber("average_bank_balance", value)} />
-                  <NumberField label="3-month revenue growth" value={draft.revenue_growth_3m * 100} suffix="%" step="0.5" onChange={(value) => updateNumber("revenue_growth_3m", String(Number(value) / 100))} />
-                  <NumberField label="Cash-flow volatility" value={draft.cash_flow_volatility * 100} suffix="%" step="1" onChange={(value) => updateNumber("cash_flow_volatility", String(Number(value) / 100))} />
+                  <NumberField label="Monthly revenue" value={draft.monthly_revenue} prefix="₹" min={1} max={10_000_000_000} onChange={(value) => updateNumber("monthly_revenue", value)} />
+                  <NumberField label="Operating expenses" value={draft.monthly_operating_expenses} prefix="₹" min={1} max={10_000_000_000} onChange={(value) => updateNumber("monthly_operating_expenses", value)} />
+                  <NumberField label="Free cash flow" value={draft.free_cash_flow} prefix="₹" min={-10_000_000_000} max={10_000_000_000} onChange={(value) => updateNumber("free_cash_flow", value)} />
+                  <NumberField label="Average bank balance" value={draft.average_bank_balance} prefix="₹" min={0} max={100_000_000_000} onChange={(value) => updateNumber("average_bank_balance", value)} />
+                  <NumberField label="3-month revenue growth" value={draft.revenue_growth_3m * 100} suffix="%" step="0.5" min={-100} max={300} onChange={(value) => updatePercent("revenue_growth_3m", value)} />
+                  <NumberField label="Cash-flow volatility" value={draft.cash_flow_volatility * 100} suffix="%" step="1" min={0} max={100} onChange={(value) => updatePercent("cash_flow_volatility", value)} />
                 </>}
                 {tab === "debt" && <>
-                  <NumberField label="Outstanding loan" value={draft.outstanding_loan_amount} prefix="₹" onChange={(value) => updateNumber("outstanding_loan_amount", value)} />
-                  <NumberField label="Current monthly EMI" value={draft.current_emi} prefix="₹" onChange={(value) => updateNumber("current_emi", value)} />
-                  <NumberField label="Total existing debt" value={draft.total_existing_debt} prefix="₹" onChange={(value) => updateNumber("total_existing_debt", value)} />
-                  <NumberField label="Interest rate" value={draft.interest_rate} suffix="%" step="0.1" onChange={(value) => updateNumber("interest_rate", value)} />
-                  <NumberField label="Remaining tenure" value={draft.remaining_tenure_months} suffix="months" onChange={(value) => updateNumber("remaining_tenure_months", value)} />
-                  <NumberField label="Active loans" value={draft.number_of_active_loans} onChange={(value) => updateNumber("number_of_active_loans", value)} />
+                  <NumberField label="Outstanding loan" value={draft.outstanding_loan_amount} prefix="₹" min={1} max={1_000_000_000_000} onChange={(value) => updateNumber("outstanding_loan_amount", value)} />
+                  <NumberField label="Current monthly EMI" value={draft.current_emi} prefix="₹" min={1} max={10_000_000_000} onChange={(value) => updateNumber("current_emi", value)} />
+                  <NumberField label="Total existing debt" value={draft.total_existing_debt} prefix="₹" min={1} max={1_000_000_000_000} onChange={(value) => updateNumber("total_existing_debt", value)} />
+                  <NumberField label="Interest rate" value={draft.interest_rate} suffix="%" step="0.1" min={0} max={40} onChange={(value) => updateNumber("interest_rate", value)} />
+                  <NumberField label="Remaining tenure" value={draft.remaining_tenure_months} suffix="months" min={1} max={360} onChange={(value) => updateNumber("remaining_tenure_months", value)} />
+                  <NumberField label="Active loans" value={draft.number_of_active_loans} min={1} max={20} onChange={(value) => updateNumber("number_of_active_loans", value)} />
                 </>}
                 {tab === "conduct" && <>
-                  <NumberField label="Receivable days" value={draft.receivable_days} suffix="days" onChange={(value) => updateNumber("receivable_days", value)} />
-                  <NumberField label="Change in receivable days" value={draft.receivable_days_change} suffix="days" onChange={(value) => updateNumber("receivable_days_change", value)} />
-                  <NumberField label="Overdue receivables" value={draft.overdue_receivables_ratio * 100} suffix="%" onChange={(value) => updateNumber("overdue_receivables_ratio", String(Number(value) / 100))} />
-                  <NumberField label="Delayed EMIs (3m)" value={draft.delayed_emi_count_3m} onChange={(value) => updateNumber("delayed_emi_count_3m", value)} />
-                  <NumberField label="Missed EMIs" value={draft.missed_emi_count} onChange={(value) => updateNumber("missed_emi_count", value)} />
-                  <NumberField label="Average payment delay" value={draft.average_payment_delay_days} suffix="days" onChange={(value) => updateNumber("average_payment_delay_days", value)} />
+                  <NumberField label="Receivable days" value={draft.receivable_days} suffix="days" min={0} max={365} onChange={(value) => updateNumber("receivable_days", value)} />
+                  <NumberField label="Change in receivable days" value={draft.receivable_days_change} suffix="days" min={-365} max={365} onChange={(value) => updateNumber("receivable_days_change", value)} />
+                  <NumberField label="Overdue receivables" value={draft.overdue_receivables_ratio * 100} suffix="%" min={0} max={100} onChange={(value) => updatePercent("overdue_receivables_ratio", value)} />
+                  <NumberField label="Delayed EMIs (3m)" value={draft.delayed_emi_count_3m} min={0} max={3} onChange={(value) => updateNumber("delayed_emi_count_3m", value)} />
+                  <NumberField label="Delayed EMIs (6m)" value={draft.delayed_emi_count_6m} min={0} max={6} onChange={(value) => updateNumber("delayed_emi_count_6m", value)} />
+                  <NumberField label="Missed EMIs" value={draft.missed_emi_count} min={0} max={6} onChange={(value) => updateNumber("missed_emi_count", value)} />
+                  <NumberField label="Average payment delay" value={draft.average_payment_delay_days} suffix="days" min={0} max={365} onChange={(value) => updateNumber("average_payment_delay_days", value)} />
                 </>}
                 {tab === "business" && <>
                   <SelectField label="Industry" value={draft.industry} options={["Manufacturing", "Textile", "Retail", "Food Processing", "Logistics", "Auto Components", "Services", "Construction", "Electronics", "Chemicals"]} onChange={(value) => updateText("industry", value)} />
                   <SelectField label="State" value={draft.state} options={["Maharashtra", "Gujarat", "Tamil Nadu", "Karnataka", "Delhi", "Rajasthan", "Telangana", "Uttar Pradesh"]} onChange={(value) => updateText("state", value)} />
                   <SelectField label="Business type" value={draft.business_type} options={["Proprietorship", "Partnership", "Private Limited", "LLP"]} onChange={(value) => updateText("business_type", value)} />
-                  <NumberField label="Business age" value={draft.business_age_years} suffix="years" onChange={(value) => updateNumber("business_age_years", value)} />
-                  <NumberField label="Employees" value={draft.employee_count} onChange={(value) => updateNumber("employee_count", value)} />
-                  <NumberField label="GST turnover growth" value={draft.gst_turnover_growth * 100} suffix="%" onChange={(value) => updateNumber("gst_turnover_growth", String(Number(value) / 100))} />
+                  <NumberField label="Business age" value={draft.business_age_years} suffix="years" step="0.1" min={0.1} max={100} onChange={(value) => updateNumber("business_age_years", value)} />
+                  <NumberField label="Employees" value={draft.employee_count} min={1} max={1_000_000} onChange={(value) => updateNumber("employee_count", value)} />
+                  <NumberField label="GST turnover growth" value={draft.gst_turnover_growth * 100} suffix="%" min={-100} max={300} onChange={(value) => updatePercent("gst_turnover_growth", value)} />
+                  <NumberField label="GST-to-bank variance" value={draft.gst_vs_bank_credit_difference * 100} suffix="%" min={0} max={100} onChange={(value) => updatePercent("gst_vs_bank_credit_difference", value)} />
                 </>}
               </div>
 
+              {validationIssues.length > 0 && <div className="validation-panel" role="alert"><AlertTriangle size={14} /><span><b>Check borrower inputs</b>{validationIssues.slice(0, 2).join(" ")}{validationIssues.length > 2 ? ` +${validationIssues.length - 2} more.` : ""}</span></div>}
               <div className="form-note"><Info size={13} /><span>Derived ratios—including DSCR, EMI burden and liquidity stress—are calculated automatically.</span></div>
-              <button className="run-button" type="submit"><Sparkles size={16} /> Run 90-day risk analysis <ArrowRight size={16} /></button>
+              <button className="run-button" type="submit" disabled={validationIssues.length > 0}><Sparkles size={16} /> Run 90-day risk analysis <ArrowRight size={16} /></button>
             </form>
 
             <section className={`risk-result-card ${categoryClass}`} aria-live="polite">
@@ -301,9 +316,9 @@ export default function Home() {
 
               <div className="warning-panel">
                 <div className="warning-heading"><AlertTriangle size={15} /><span>Early-warning signals</span><b>{result.warnings.length}</b></div>
-                {result.warnings.length ? result.warnings.slice(0, 5).map((warning) => <p key={warning}><span>!</span>{warning}</p>) : <p className="all-clear"><Check size={13} /> No rule-assisted warnings detected.</p>}
+                {result.warnings.length ? result.warnings.map((warning) => <p key={warning}><span>!</span>{warning}</p>) : <p className="all-clear"><Check size={13} /> No rule-assisted warnings detected.</p>}
               </div>
-              <button className="download-button" onClick={downloadAnalysis}><Download size={15} /> Download risk analysis</button>
+              <a className="download-button" href={downloadHref} download="restructai-risk-analysis.txt" onClick={confirmDownload}><Download size={15} /> Download risk analysis</a>
               <small className="result-disclaimer">Calibrated probability • Synthetic-data methodology demo</small>
             </section>
           </section>
@@ -378,8 +393,8 @@ export default function Home() {
   );
 }
 
-function NumberField({ label, value, onChange, prefix, suffix, step = "1" }: { label: string; value: number; onChange: (value: string) => void; prefix?: string; suffix?: string; step?: string }) {
-  return <label className="risk-field"><span>{label}</span><div>{prefix && <i>{prefix}</i>}<input aria-label={label} type="number" step={step} value={Number.isFinite(value) ? value : ""} onChange={(event) => onChange(event.target.value)} />{suffix && <b>{suffix}</b>}</div></label>;
+function NumberField({ label, value, onChange, prefix, suffix, step = "1", min, max }: { label: string; value: number; onChange: (value: string) => void; prefix?: string; suffix?: string; step?: string; min?: number; max?: number }) {
+  return <label className="risk-field"><span>{label}</span><div>{prefix && <i>{prefix}</i>}<input aria-label={label} type="number" step={step} min={min} max={max} required value={Number.isFinite(value) ? value : ""} onChange={(event) => onChange(event.target.value)} />{suffix && <b>{suffix}</b>}</div></label>;
 }
 
 function SelectField({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) {
